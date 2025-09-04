@@ -3,25 +3,23 @@ from datetime import datetime
 
 app = Flask(__name__)
 
-# เก็บรายการธุรกรรมทั้งหมด
-transactions = []
+transactions = []  # เก็บธุรกรรม
 
-# แผนที่ธนาคารภาษาไทย
+# Map ธนาคารเป็นภาษาไทย
 BANK_MAP = {
     "BBL": "ธนาคารกรุงเทพ",
-    "KTB": "กรุงไทย",
-    "SCB": "ไทยพาณิชย์",
-    "KBANK": "กสิกรไทย",
+    "KTB": "ธนาคารกรุงไทย",
+    "SCB": "ธนาคารไทยพาณิชย์",
+    "KBANK": "ธนาคารกสิกรไทย",
     "BAAC": "ธ.ก.ส.",
-    "GSB": "ออมสิน",
-    "TMB": "ทหารไทย",
-    "BAY": "กรุงศรี",
+    "GSB": "ธนาคารออมสิน",
+    "TMB": "ธนาคารทหารไทย",
+    "BAY": "ธนาคารกรุงศรี",
     "CIMB": "CIMB ไทย",
     "UOB": "UOB",
     "TTB": "TTB",
 }
 
-# แปลงประเภท
 def translate_event_type(event_type):
     if event_type == "P2P":
         return "โอนเงิน"
@@ -32,7 +30,6 @@ def translate_event_type(event_type):
     else:
         return "อื่น ๆ"
 
-
 @app.route("/truewallet/webhook", methods=["POST"])
 def truewallet_webhook():
     payload = request.json
@@ -42,7 +39,6 @@ def truewallet_webhook():
     account_name = payload.get("accountName", "-")
     bank_code = payload.get("bankCode", "")
 
-    # แปลงธนาคาร
     bank_name = BANK_MAP.get(bank_code, "ธนาคารอื่น")
 
     transaction = {
@@ -53,9 +49,8 @@ def truewallet_webhook():
         "time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         "status": "new",
     }
-    transactions.insert(0, transaction)  # เก็บไว้ด้านบนสุด
+    transactions.insert(0, transaction)  # แทรกด้านบน
     return jsonify({"status": "success"})
-
 
 @app.route("/approve/<txid>")
 def approve_transaction(txid):
@@ -65,11 +60,9 @@ def approve_transaction(txid):
             break
     return redirect(url_for("dashboard"))
 
-
 @app.route("/dashboard")
 def dashboard():
-    # เอาเฉพาะ 10 ออเดอร์ล่าสุด
-    latest_tx = transactions[:10]
+    latest_tx = transactions[:10]  # แสดงแค่ 10 รายการล่าสุด
 
     dashboard_html = """
     <html>
@@ -87,7 +80,7 @@ def dashboard():
             table { width: 100%; border-collapse: collapse; }
             th, td { border: 1px solid #ddd; padding: 8px; text-align: center; }
             th { background-color: #f2f2f2; }
-            .btn { padding: 4px 10px; background: green; color: white; border: none; cursor: pointer; }
+            .btn { padding: 4px 10px; background: green; color: white; border: none; cursor: pointer; text-decoration: none; }
             .btn:disabled { background: gray; }
         </style>
         <script>
@@ -131,11 +124,9 @@ def dashboard():
     """
     return render_template_string(dashboard_html, transactions=latest_tx)
 
-
 @app.route("/")
 def home():
     return redirect(url_for("dashboard"))
-
 
 if __name__ == "__main__":
     app.run(debug=True)
