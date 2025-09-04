@@ -165,7 +165,7 @@ button:hover{background:#45a049;}
 </html>
 """
 
-# Dashboard HTML (แก้ปัญหา triple-quote)
+# Dashboard HTML
 dashboard_html = """
 <!DOCTYPE html>
 <html>
@@ -185,7 +185,6 @@ button.approve-btn:hover{background:#45a049;}
 </style>
 <script>
 let knownTxIds = {{ new_orders | map(attribute='txid') | list | safe }};
-function playSound(){let audio=new Audio("https://www.soundjay.com/buttons/sounds/button-3.mp3");audio.play();}
 function showPopup(message){
     let popup=document.createElement('div');
     popup.innerText=message;
@@ -209,7 +208,6 @@ function checkNewOrders(){
             let txid=row.cells[0].innerText;
             if(!knownTxIds.includes(txid)){
                 knownTxIds.push(txid);
-                playSound();
                 showPopup('รายการใหม่เข้ามา: '+txid);
             }
         });
