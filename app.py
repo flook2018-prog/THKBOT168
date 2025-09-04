@@ -52,7 +52,7 @@ def get_transactions():
            tx["event"] in ["วอลเล็ตโอนเงิน", "รับจากซองทรูมันนี่"]
     )
 
-    # อัปเดต daily_summary
+    # อัปเดต daily_summary รวมทุกช่องทาง
     daily_summary.clear()
     for tx in transactions:
         if tx["status"] == "approved":
@@ -63,7 +63,6 @@ def get_transactions():
     for tx in new_orders + approved_orders:
         tx["time_str"] = tx["time"].strftime("%Y-%m-%d %H:%M:%S")
         tx["amount_str"] = f"{tx['amount']:,.2f}"
-        # เพิ่มผู้อนุมัติถ้ามี
         tx["approver_name"] = tx.get("approver_name", "")
 
     daily_list = [{"date": d, "total": f"{v:,.2f}"} for d, v in sorted(daily_summary.items())]
@@ -79,7 +78,6 @@ def get_transactions():
 def approve():
     txid = request.json.get("id")
     user_ip = request.remote_addr or "unknown"
-    # กำหนดชื่อผู้อนุมัติจาก IP
     if user_ip not in ip_approver_map:
         ip_approver_map[user_ip] = random_english_name()
     approver_name = ip_approver_map[user_ip]
@@ -124,9 +122,14 @@ def webhook():
         sender_mobile = decoded.get("sender_mobile") or "-"
         name = f"{sender_name} / {sender_mobile}" if sender_mobile else sender_name
         bank = decoded.get("channel") or "-"
-        message_text = decoded.get("message") or ""
+
+        # ใช้เวลาจาก payload ถ้ามี ไม่งั้นใช้เวลาปัจจุบัน
+        if decoded.get("timestamp"):
+            tx_time = datetime.fromtimestamp(int(decoded["timestamp"]))
+        else:
+            tx_time = datetime.now()
+
         status = "new"
-        now = datetime.now()
 
         tx = {
             "id": txid,
@@ -135,8 +138,7 @@ def webhook():
             "name": name,
             "bank": bank,
             "status": status,
-            "time": now,
-            "message": message_text
+            "time": tx_time,
         }
         transactions.append(tx)
         log_with_time("[WEBHOOK RECEIVED]", tx)
@@ -153,85 +155,22 @@ DASHBOARD_HTML = """
 <head>
     <title>THKBot168 Dashboard</title>
     <style>
-        body {
-            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-            background: #f0f2f5;
-            margin: 0; padding: 20px;
-            color: #333;
-        }
-
-        h1, h2 {
-            text-align: center;
-            margin-bottom: 15px;
-        }
-
-        .scroll-box {
-            max-height: 400px;
-            overflow-y: auto;
-            margin-bottom: 25px;
-            background: #fff;
-            border-radius: 12px;
-            box-shadow: 0 4px 12px rgba(0,0,0,0.08);
-            padding: 10px;
-            scroll-behavior: smooth;
-        }
-
-        table {
-            width: 100%;
-            border-collapse: collapse;
-        }
-
-        th, td {
-            padding: 12px;
-            text-align: center;
-        }
-
-        th {
-            position: sticky;
-            top: 0;
-            z-index: 2;
-            background: linear-gradient(90deg,#4a90e2,#007bff);
-            color: white;
-            box-shadow: 0 2px 5px rgba(0,0,0,0.1);
-        }
-
-        tr:hover {
-            background-color: #f1f5f9;
-            transition: background 0.3s;
-        }
-
-        button {
-            padding: 6px 12px;
-            border: none;
-            border-radius: 6px;
-            cursor: pointer;
-            background: #28a745;
-            color: white;
-            transition: all 0.3s ease;
-        }
-
-        button:hover {
-            background: #218838;
-            transform: scale(1.05);
-        }
-
-        ::-webkit-scrollbar {
-            width: 8px;
-        }
-
-        ::-webkit-scrollbar-thumb {
-            background-color: rgba(0,0,0,0.2);
-            border-radius: 4px;
-        }
-
-        ::-webkit-scrollbar-track {
-            background: transparent;
-        }
+        body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background: #f0f2f5; margin:0; padding:20px; color:#333;}
+        h1,h2 { text-align:center; margin-bottom:15px; }
+        .scroll-box { max-height:400px; overflow-y:auto; margin-bottom:25px; background:#fff; border-radius:12px; box-shadow:0 4px 12px rgba(0,0,0,0.08); padding:10px; scroll-behavior:smooth; }
+        table { width:100%; border-collapse:collapse; }
+        th, td { padding:12px; text-align:center; }
+        th { position:sticky; top:0; z-index:2; background:linear-gradient(90deg,#4a90e2,#007bff); color:white; box-shadow:0 2px 5px rgba(0,0,0,0.1); }
+        tr:hover { background-color:#f1f5f9; transition:0.3s; }
+        button { padding:6px 12px; border:none; border-radius:6px; cursor:pointer; background:#28a745; color:white; transition:0.3s; }
+        button:hover { background:#218838; transform:scale(1.05); }
+        ::-webkit-scrollbar { width:8px; }
+        ::-webkit-scrollbar-thumb { background-color: rgba(0,0,0,0.2); border-radius:4px; }
+        ::-webkit-scrollbar-track { background:transparent; }
     </style>
 </head>
 <body>
     <h1>THKBot168 Dashboard (Realtime)</h1>
-
     <h2>วันที่-เวลา: <span id="current-datetime"></span></h2>
     <h2> <span id="wallet-info">0 บาท</span></h2>
 
@@ -246,7 +185,6 @@ DASHBOARD_HTML = """
                 <th>ชื่อ/เบอร์</th>
                 <th>เวลา</th>
                 <th>อนุมัติ</th>
-                <th>ข้อความ</th>
             </tr>
             </thead>
             <tbody></tbody>
@@ -264,7 +202,6 @@ DASHBOARD_HTML = """
                 <th>ชื่อ/เบอร์</th>
                 <th>เวลา</th>
                 <th>ผู้อนุมัติ</th>
-                <th>ข้อความ</th>
             </tr>
             </thead>
             <tbody></tbody>
@@ -293,19 +230,16 @@ function updateCurrentTime(){
     const hh = String(now.getHours()).padStart(2,'0');
     const mm = String(now.getMinutes()).padStart(2,'0');
     const ss = String(now.getSeconds()).padStart(2,'0');
-    document.getElementById("current-datetime").innerText =
-        `${y}-${m}-${d} ${hh}:${mm}:${ss}`;
+    document.getElementById("current-datetime").innerText = `${y}-${m}-${d} ${hh}:${mm}:${ss}`;
 }
-setInterval(updateCurrentTime, 1000);
+setInterval(updateCurrentTime,1000);
 updateCurrentTime();
 
 async function fetchTransactions(){
     try{
         let resp = await fetch("/get_transactions");
         let data = await resp.json();
-
-        document.getElementById("wallet-info").innerText =
-            `💰💰 ยอด Wallet วันนี้: ${data.wallet_daily_total} บาท`;
+        document.getElementById("wallet-info").innerText = `💰💰 ยอด Wallet วันนี้: ${data.wallet_daily_total} บาท`;
 
         // New orders
         let newTableBody = document.querySelector("#new-orders-table tbody");
@@ -321,21 +255,16 @@ async function fetchTransactions(){
             let btn = document.createElement("button");
             btn.innerText = "อนุมัติ";
             btn.onclick = async ()=> {
-                await fetch("/approve", {
-                    method:"POST",
-                    headers:{"Content-Type":"application/json"},
-                    body: JSON.stringify({id: tx.id})
-                });
+                await fetch("/approve",{method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({id:tx.id})});
                 fetchTransactions();
             };
             btnCell.appendChild(btn);
-            row.insertCell(6).innerText = tx.message;
         });
 
         // Approved orders
         let approvedTableBody = document.querySelector("#approved-orders-table tbody");
         approvedTableBody.innerHTML = "";
-        data.approved_orders.forEach(tx => {
+        data.approved_orders.forEach(tx=>{
             let row = approvedTableBody.insertRow();
             row.insertCell(0).innerText = tx.id;
             row.insertCell(1).innerText = tx.event;
@@ -343,30 +272,28 @@ async function fetchTransactions(){
             row.insertCell(3).innerText = tx.name;
             row.insertCell(4).innerText = tx.time_str;
             row.insertCell(5).innerText = tx.approver_name;
-            row.insertCell(6).innerText = tx.message;
         });
 
         // Daily summary
         let dailyTableBody = document.querySelector("#daily-summary-table tbody");
         dailyTableBody.innerHTML = "";
-        data.daily_summary.forEach(day => {
+        data.daily_summary.forEach(day=>{
             let row = dailyTableBody.insertRow();
             row.insertCell(0).innerText = day.date;
             row.insertCell(1).innerText = day.total;
         });
 
-    } catch(e){
-        console.error("Error fetching transactions:", e);
+    }catch(e){
+        console.error("Error fetching transactions:",e);
     }
 }
 
-setInterval(fetchTransactions, 3000);
+setInterval(fetchTransactions,3000);
 fetchTransactions();
 </script>
 </body>
 </html>
 """
 
-
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
+    app.run(host="0.0.0.0", port=int(os.environ.get("PORT",5000)))
