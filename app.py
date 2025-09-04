@@ -59,7 +59,6 @@ def dashboard():
     new_orders = [tx for tx in transactions if tx['status']=="new"]
     approved_orders = approved_transactions
 
-    # ยอด Wallet วันนี้
     global wallet_daily_total
     today = datetime.now().date()
     wallet_daily_total = sum(tx['amount'] for tx in approved_orders if datetime.fromtimestamp(tx['timestamp']).date()==today and tx['event']=="วอลเล็ต")
@@ -75,36 +74,57 @@ def dashboard():
 # Webhook
 @app.route("/truewallet/webhook", methods=["POST"])
 def webhook():
-    data = request.json
-    if not data:
-        return jsonify({"status":"error","message":"ไม่มีข้อมูล JSON"}),400
+    try:
+        data = request.json
+        if not data:
+            return jsonify({"status":"error","message":"ไม่มีข้อมูล JSON"}),400
 
-    event_type_raw = data.get("event","Other")
-    bank_code = data.get("bank_code")
-    event_type = translate_event_type(event_type_raw, bank_code)
-    amount = float(data.get("amount",0))
-    txid = data.get("txid","N/A")
-    timestamp = data.get("timestamp", datetime.now().timestamp())
+        # DEBUG LOG
+        print("Incoming webhook data:", data)
 
-    if event_type=="วอลเล็ต":
-        name = data.get("name","-")
-        phone = data.get("phone","-")
-        name_phone = f"{name} / {phone}"
-    else:
-        name_phone = "-"
+        # Transaction ID
+        txid = data.get("txid") or data.get("transaction_id") or "N/A"
 
-    tx = {
-        "txid": txid,
-        "event": event_type,
-        "amount": amount,
-        "name_phone": name_phone,
-        "timestamp": timestamp,
-        "status":"new",
-        "approved_by": None,
-        "approved_time": None
-    }
-    transactions.append(tx)
-    return jsonify({"status":"success"}),200
+        # จำนวนเงิน
+        try:
+            amount = float(data.get("amount",0) or 0)
+        except:
+            amount = 0.0
+
+        # ประเภท
+        event_type_raw = data.get("event") or data.get("type") or "Other"
+        bank_code = data.get("bank_code") or data.get("bank") or None
+        event_type = translate_event_type(event_type_raw, bank_code)
+
+        # เวลา
+        timestamp = data.get("timestamp") or datetime.now().timestamp()
+
+        # ชื่อ/เบอร์ สำหรับ Wallet
+        if event_type=="วอลเล็ต":
+            name = data.get("name") or data.get("customer_name") or "-"
+            phone = data.get("phone") or data.get("customer_phone") or "-"
+            name_phone = f"{name} / {phone}"
+        else:
+            name_phone = "-"
+
+        # สร้าง transaction dict
+        tx = {
+            "txid": txid,
+            "event": event_type,
+            "amount": amount,
+            "name_phone": name_phone,
+            "timestamp": timestamp,
+            "status":"new",
+            "approved_by": None,
+            "approved_time": None
+        }
+
+        transactions.append(tx)
+        return jsonify({"status":"success"}),200
+
+    except Exception as e:
+        print("Webhook error:", e)
+        return jsonify({"status":"error","message": str(e)}),500
 
 # Approve
 @app.route("/approve/<txid>", methods=["POST"])
