@@ -1,10 +1,12 @@
 from flask import Flask, request, jsonify, render_template_string
 import os, json
 from datetime import datetime, date
+from collections import defaultdict
 
 app = Flask(__name__)
 
 transactions = []  # {"id":.., "event":.., "amount":.., "name":.., "bank":.., "status":.., "time":..}
+daily_summary = defaultdict(float)  # เก็บยอดรวมต่อวัน {"YYYY-MM-DD": total_amount}
 
 LOG_FILE = "transactions.log"
 
@@ -39,14 +41,27 @@ def get_transactions():
                              if tx["status"] == "approved" and tx["time"].strftime("%Y-%m-%d") == today_str)
     wallet_history = sum(tx["amount"] for tx in transactions if tx["status"] == "approved")
 
+    # อัปเดต daily_summary
+    daily_summary.clear()
+    for tx in transactions:
+        if tx["status"] == "approved":
+            day = tx["time"].strftime("%Y-%m-%d")
+            daily_summary[day] += tx["amount"]
+
+    # format transactions
     for tx in new_orders + approved_orders:
         tx["time_str"] = tx["time"].strftime("%Y-%m-%d %H:%M:%S")
+        tx["amount_str"] = f"{tx['amount']:,.2f}"
+
+    # daily summary list sorted
+    daily_list = [{"date": d, "total": f"{v:,.2f}"} for d, v in sorted(daily_summary.items())]
 
     return jsonify({
         "new_orders": new_orders,
         "approved_orders": approved_orders,
-        "wallet_daily_total": wallet_daily_total,
-        "wallet_history": wallet_history
+        "wallet_daily_total": f"{wallet_daily_total:,.2f}",
+        "wallet_history": f"{wallet_history:,.2f}",
+        "daily_summary": daily_list
     })
 
 @app.route("/approve", methods=["POST"])
@@ -63,14 +78,10 @@ def approve():
 def webhook():
     try:
         data = None
-
-        # 1. ถ้า content-type เป็น JSON
         if request.is_json:
             data = request.get_json()
-        # 2. ถ้า form-urlencoded
         elif request.form:
             data = request.form.to_dict()
-        # 3. ถ้า text/plain หรือส่งเป็น string JSON
         elif request.data:
             try:
                 data = json.loads(request.data.decode("utf-8"))
@@ -81,16 +92,15 @@ def webhook():
             log_with_time("[WEBHOOK ERROR] ไม่มีข้อมูล JSON หรือ Form")
             return jsonify({"status":"error","message":"No data"}), 400
 
-        # ดึงค่า key หลายตัวสำรอง
         txid = data.get("transactionId") or f"TX{len(transactions)+1}"
         event_type = translate_event_type(data.get("event") or data.get("type") or "Unknown")
         try:
-            amount = float(data.get("amount", 0))
+            amount = float(str(data.get("amount", "0")).replace(",", ""))
         except:
             amount = 0
         name = data.get("accountName") or data.get("name") or "-"
         bank = data.get("bankCode") or data.get("bank") or "-"
-        status = data.get("status", "new")
+        status = str(data.get("status", "new")).lower()
         now = datetime.now()
 
         tx = {
@@ -99,7 +109,7 @@ def webhook():
             "amount": amount,
             "name": name,
             "bank": bank,
-            "status": status.lower(),
+            "status": status,
             "time": now
         }
         transactions.append(tx)
@@ -120,7 +130,7 @@ DASHBOARD_HTML = """
         body { font-family: Arial, sans-serif; padding: 20px; background: #f0f2f5; }
         h1, h2 { text-align: center; }
         .scroll-box { max-height: 400px; overflow-y: auto; margin-bottom: 20px; background: white; border-radius: 12px; }
-        table { width: 100%; border-collapse: collapse; }
+        table { width: 100%; border-collapse: collapse; margin-bottom: 20px; }
         th, td { padding: 12px; border-bottom: 1px solid #eee; text-align: center; }
         th { background: #007bff; color: white; position: sticky; top: 0; z-index: 2; }
         tr:hover { background-color: #f9f9f9; }
@@ -129,7 +139,9 @@ DASHBOARD_HTML = """
 </head>
 <body>
     <h1>THKBot168 Dashboard (Realtime)</h1>
-    <h2 id="wallet-info">ยอด Wallet วันนี้: 0 บาท | ย้อนหลัง: 0 บาท</h2>
+
+    <h2>วันที่-เวลา: <span id="current-datetime"></span></h2>
+    <h2>ยอด Wallet วันนี้: <span id="wallet-info">0 บาท</span></h2>
 
     <h2>รายการใหม่ (New Orders)</h2>
     <div class="scroll-box">
@@ -164,7 +176,36 @@ DASHBOARD_HTML = """
         </table>
     </div>
 
+    <h2>ยอด Wallet รายวัน (Daily Summary)</h2>
+    <div class="scroll-box">
+        <table id="daily-summary-table">
+            <thead>
+            <tr>
+                <th>วันที่</th>
+                <th>ยอดรวม (บาท)</th>
+            </tr>
+            </thead>
+            <tbody></tbody>
+        </table>
+    </div>
+
 <script>
+// ================= Update DateTime =================
+function updateCurrentTime(){
+    const now = new Date();
+    const y = now.getFullYear();
+    const m = String(now.getMonth()+1).padStart(2,'0');
+    const d = String(now.getDate()).padStart(2,'0');
+    const hh = String(now.getHours()).padStart(2,'0');
+    const mm = String(now.getMinutes()).padStart(2,'0');
+    const ss = String(now.getSeconds()).padStart(2,'0');
+    document.getElementById("current-datetime").innerText =
+        `${y}-${m}-${d} ${hh}:${mm}:${ss}`;
+}
+setInterval(updateCurrentTime, 1000);
+updateCurrentTime();
+
+// ================= Update Transactions =================
 async function fetchTransactions(){
     try{
         let resp = await fetch("/get_transactions");
@@ -181,7 +222,7 @@ async function fetchTransactions(){
             let row = newTableBody.insertRow();
             row.insertCell(0).innerText = tx.id;
             row.insertCell(1).innerText = tx.event;
-            row.insertCell(2).innerText = tx.amount;
+            row.insertCell(2).innerText = tx.amount_str;
             row.insertCell(3).innerText = tx.name;
             row.insertCell(4).innerText = tx.time_str;
             let btnCell = row.insertCell(5);
@@ -205,9 +246,18 @@ async function fetchTransactions(){
             let row = approvedTableBody.insertRow();
             row.insertCell(0).innerText = tx.id;
             row.insertCell(1).innerText = tx.event;
-            row.insertCell(2).innerText = tx.amount;
+            row.insertCell(2).innerText = tx.amount_str;
             row.insertCell(3).innerText = tx.name;
             row.insertCell(4).innerText = tx.time_str;
+        });
+
+        // Update daily summary table
+        let dailyTableBody = document.querySelector("#daily-summary-table tbody");
+        dailyTableBody.innerHTML = "";
+        data.daily_summary.forEach(day => {
+            let row = dailyTableBody.insertRow();
+            row.insertCell(0).innerText = day.date;
+            row.insertCell(1).innerText = day.total;
         });
 
     } catch(e){
