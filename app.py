@@ -1,5 +1,5 @@
 from flask import Flask, request, jsonify, render_template_string
-import os, json, jwt
+import os, json, jwt, random
 from datetime import datetime, date
 from collections import defaultdict
 
@@ -7,9 +7,10 @@ app = Flask(__name__)
 
 transactions = []  # เก็บรายการทั้งหมด
 daily_summary = defaultdict(float)  # เก็บยอดรวมต่อวัน {"YYYY-MM-DD": total_amount}
+ip_approver_map = {}  # เก็บ IP -> ชื่อผู้อนุมัติ
 
 LOG_FILE = "transactions.log"
-SECRET_KEY = "8d2909e5a59bc24bbf14059e9e591402"  # ใช้ Secret ของคุณ
+SECRET_KEY = "8d2909e5a59bc24bbf14059e9e591402"  # Secret ของคุณ
 
 # แปลงประเภทเหตุการณ์
 def translate_event_type(event_type):
@@ -28,6 +29,10 @@ def log_with_time(*args):
     with open(LOG_FILE, "a", encoding="utf-8") as f:
         f.write(msg + "\n")
 
+def random_english_name():
+    first_names = ["Alice","Bob","Charlie","David","Eve","Frank","Grace","Hannah","Ian","Jack","Kathy","Leo","Mia","Nina","Oscar"]
+    return random.choice(first_names)
+
 # ================== Dashboard ==================
 @app.route("/")
 def index():
@@ -39,9 +44,13 @@ def get_transactions():
     new_orders = [tx for tx in transactions if tx["status"] == "new"][-20:][::-1]
     approved_orders = [tx for tx in transactions if tx["status"] == "approved"][-20:][::-1]
 
-    wallet_daily_total = sum(tx["amount"] for tx in transactions
-                             if tx["status"] == "approved" and tx["time"].strftime("%Y-%m-%d") == today_str)
-    wallet_history = sum(tx["amount"] for tx in transactions if tx["status"] == "approved")
+    # ยอด Wallet วันนี้ เฉพาะ TrueWallet
+    wallet_daily_total = sum(
+        tx["amount"] for tx in transactions
+        if tx["status"] == "approved" and
+           tx["time"].strftime("%Y-%m-%d") == today_str and
+           tx["event"] in ["วอลเล็ตโอนเงิน", "รับจากซองทรูมันนี่"]
+    )
 
     # อัปเดต daily_summary
     daily_summary.clear()
@@ -54,6 +63,8 @@ def get_transactions():
     for tx in new_orders + approved_orders:
         tx["time_str"] = tx["time"].strftime("%Y-%m-%d %H:%M:%S")
         tx["amount_str"] = f"{tx['amount']:,.2f}"
+        # เพิ่มผู้อนุมัติถ้ามี
+        tx["approver_name"] = tx.get("approver_name", "")
 
     daily_list = [{"date": d, "total": f"{v:,.2f}"} for d, v in sorted(daily_summary.items())]
 
@@ -61,17 +72,23 @@ def get_transactions():
         "new_orders": new_orders,
         "approved_orders": approved_orders,
         "wallet_daily_total": f"{wallet_daily_total:,.2f}",
-        "wallet_history": f"{wallet_history:,.2f}",
         "daily_summary": daily_list
     })
 
 @app.route("/approve", methods=["POST"])
 def approve():
     txid = request.json.get("id")
+    user_ip = request.remote_addr or "unknown"
+    # กำหนดชื่อผู้อนุมัติจาก IP
+    if user_ip not in ip_approver_map:
+        ip_approver_map[user_ip] = random_english_name()
+    approver_name = ip_approver_map[user_ip]
+
     for tx in transactions:
         if tx["id"] == txid:
             tx["status"] = "approved"
-            log_with_time(f"[UPDATE STATUS] {txid} -> approved")
+            tx["approver_name"] = approver_name
+            log_with_time(f"[UPDATE STATUS] {txid} -> approved by {approver_name} ({user_ip})")
             break
     return jsonify({"status": "success"}), 200
 
@@ -100,10 +117,9 @@ def webhook():
             log_with_time("[WEBHOOK ERROR] Invalid JWT", e)
             return jsonify({"status":"invalid","message":str(e)}), 400
 
-        # แปลงข้อมูลจาก JWT payload
         txid = decoded.get("transaction_id") or f"TX{len(transactions)+1}"
         event_type = translate_event_type(decoded.get("event_type", "Unknown"))
-        amount = int(decoded.get("amount", 0)) / 100  # แปลงสตางค์เป็นบาท
+        amount = int(decoded.get("amount", 0)) / 100
         sender_name = decoded.get("sender_name") or "-"
         sender_mobile = decoded.get("sender_mobile") or "-"
         name = f"{sender_name} / {sender_mobile}" if sender_mobile else sender_name
@@ -151,7 +167,7 @@ DASHBOARD_HTML = """
     <h1>THKBot168 Dashboard (Realtime)</h1>
 
     <h2>วันที่-เวลา: <span id="current-datetime"></span></h2>
-    <h2>ยอด Wallet วันนี้: <span id="wallet-info">0 บาท</span></h2>
+    <h2>💰💰 ยอด Wallet วันนี้: <span id="wallet-info">0 บาท</span></h2>
 
     <h2>รายการใหม่ (New Orders)</h2>
     <div class="scroll-box">
@@ -181,6 +197,7 @@ DASHBOARD_HTML = """
                 <th>จำนวน</th>
                 <th>ชื่อ/เบอร์</th>
                 <th>เวลา</th>
+                <th>ผู้อนุมัติ</th>
                 <th>ข้อความ</th>
             </tr>
             </thead>
@@ -223,9 +240,11 @@ async function fetchTransactions(){
         let resp = await fetch("/get_transactions");
         let data = await resp.json();
 
+        // Update wallet info
         document.getElementById("wallet-info").innerText =
-            `ยอด Wallet วันนี้: ${data.wallet_daily_total} บาท | ย้อนหลัง: ${data.wallet_history} บาท`;
+            `💰💰 ยอด Wallet วันนี้: ${data.wallet_daily_total} บาท`;
 
+        // Update new orders table
         let newTableBody = document.querySelector("#new-orders-table tbody");
         newTableBody.innerHTML = "";
         data.new_orders.forEach(tx => {
@@ -250,6 +269,7 @@ async function fetchTransactions(){
             row.insertCell(6).innerText = tx.message;
         });
 
+        // Update approved orders table
         let approvedTableBody = document.querySelector("#approved-orders-table tbody");
         approvedTableBody.innerHTML = "";
         data.approved_orders.forEach(tx => {
@@ -259,9 +279,11 @@ async function fetchTransactions(){
             row.insertCell(2).innerText = tx.amount_str;
             row.insertCell(3).innerText = tx.name;
             row.insertCell(4).innerText = tx.time_str;
-            row.insertCell(5).innerText = tx.message;
+            row.insertCell(5).innerText = tx.approver_name;
+            row.insertCell(6).innerText = tx.message;
         });
 
+        // Update daily summary table
         let dailyTableBody = document.querySelector("#daily-summary-table tbody");
         dailyTableBody.innerHTML = "";
         data.daily_summary.forEach(day => {
