@@ -161,9 +161,15 @@ DASHBOARD_HTML = """
         th { background: #007bff; color: white; position: sticky; top: 0; z-index: 2; }
         tr:hover { background-color: #f9f9f9; }
         button { padding: 6px 12px; border: none; border-radius: 6px; cursor: pointer; background: green; color: white; }
+        .header-img { text-align: center; margin-bottom: 20px; }
+        .header-img img { max-width: 100%; height: auto; border-radius: 12px; }
     </style>
 </head>
 <body>
+    <div class="header-img">
+        <img src="/static/ngox-header.png" alt="Header">
+    </div>
+
     <h1>THKBot168 Dashboard (Realtime)</h1>
 
     <h2>วันที่-เวลา: <span id="current-datetime"></span></h2>
