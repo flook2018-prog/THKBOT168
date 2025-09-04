@@ -1,5 +1,5 @@
 from flask import Flask, request, jsonify, render_template_string
-import os
+import os, json
 from datetime import datetime, date
 
 app = Flask(__name__)
@@ -62,17 +62,28 @@ def approve():
 @app.route("/truewallet/webhook", methods=["POST"])
 def webhook():
     try:
-        # ตรวจสอบว่ามาเป็น JSON หรือไม่
+        data = None
+
+        # 1. ถ้า content-type เป็น JSON
         if request.is_json:
             data = request.get_json()
-        else:
+        # 2. ถ้า form-urlencoded
+        elif request.form:
             data = request.form.to_dict()
+        # 3. ถ้า text/plain หรือส่งเป็น string JSON
+        elif request.data:
+            try:
+                data = json.loads(request.data.decode("utf-8"))
+            except:
+                data = {}
+
         if not data:
             log_with_time("[WEBHOOK ERROR] ไม่มีข้อมูล JSON หรือ Form")
-            return jsonify({"status": "error", "message": "ไม่มีข้อมูล JSON หรือ Form"}), 400
+            return jsonify({"status":"error","message":"No data"}), 400
 
+        # ดึงค่า key หลายตัวสำรอง
         txid = data.get("transactionId") or f"TX{len(transactions)+1}"
-        event_type = translate_event_type(data.get("event", "Unknown"))
+        event_type = translate_event_type(data.get("event") or data.get("type") or "Unknown")
         try:
             amount = float(data.get("amount", 0))
         except:
@@ -93,11 +104,11 @@ def webhook():
         }
         transactions.append(tx)
         log_with_time("[WEBHOOK RECEIVED]", tx)
-        return jsonify({"status": "success"}), 200
+        return jsonify({"status":"success"}), 200
 
     except Exception as e:
         log_with_time("[WEBHOOK EXCEPTION]", e)
-        return jsonify({"status": "error", "message": str(e)}), 500
+        return jsonify({"status":"error","message":str(e)}), 500
 
 # ================== HTML ==================
 DASHBOARD_HTML = """
@@ -108,14 +119,12 @@ DASHBOARD_HTML = """
     <style>
         body { font-family: Arial, sans-serif; padding: 20px; background: #f0f2f5; }
         h1, h2 { text-align: center; }
-        table { width: 100%; border-collapse: collapse; margin-bottom: 20px; background: white; border-radius: 12px; overflow: hidden; }
+        .scroll-box { max-height: 400px; overflow-y: auto; margin-bottom: 20px; background: white; border-radius: 12px; }
+        table { width: 100%; border-collapse: collapse; }
         th, td { padding: 12px; border-bottom: 1px solid #eee; text-align: center; }
-        th { background: #007bff; color: white; }
+        th { background: #007bff; color: white; position: sticky; top: 0; z-index: 2; }
         tr:hover { background-color: #f9f9f9; }
-        .scroll-box { max-height: 400px; overflow-y: auto; margin-bottom: 20px; }
         button { padding: 6px 12px; border: none; border-radius: 6px; cursor: pointer; background: green; color: white; }
-        .status-new { color: orange; font-weight: bold; }
-        .status-approved { color: green; font-weight: bold; }
     </style>
 </head>
 <body>
@@ -125,6 +134,7 @@ DASHBOARD_HTML = """
     <h2>รายการใหม่ (New Orders)</h2>
     <div class="scroll-box">
         <table id="new-orders-table">
+            <thead>
             <tr>
                 <th>Transaction ID</th>
                 <th>ประเภท</th>
@@ -133,12 +143,15 @@ DASHBOARD_HTML = """
                 <th>เวลา</th>
                 <th>อนุมัติ</th>
             </tr>
+            </thead>
+            <tbody></tbody>
         </table>
     </div>
 
     <h2>รายการที่อนุมัติแล้ว (Approved Orders)</h2>
     <div class="scroll-box">
         <table id="approved-orders-table">
+            <thead>
             <tr>
                 <th>Transaction ID</th>
                 <th>ประเภท</th>
@@ -146,6 +159,8 @@ DASHBOARD_HTML = """
                 <th>ชื่อ/เบอร์</th>
                 <th>เวลา</th>
             </tr>
+            </thead>
+            <tbody></tbody>
         </table>
     </div>
 
@@ -160,23 +175,15 @@ async function fetchTransactions(){
             `ยอด Wallet วันนี้: ${data.wallet_daily_total} บาท | ย้อนหลัง: ${data.wallet_history} บาท`;
 
         // Update new orders table
-        let newTable = document.getElementById("new-orders-table");
-        newTable.innerHTML = `<tr>
-            <th>Transaction ID</th>
-            <th>ประเภท</th>
-            <th>จำนวน</th>
-            <th>ชื่อ/เบอร์</th>
-            <th>เวลา</th>
-            <th>อนุมัติ</th>
-        </tr>`;
+        let newTableBody = document.querySelector("#new-orders-table tbody");
+        newTableBody.innerHTML = "";
         data.new_orders.forEach(tx => {
-            let row = newTable.insertRow();
+            let row = newTableBody.insertRow();
             row.insertCell(0).innerText = tx.id;
             row.insertCell(1).innerText = tx.event;
             row.insertCell(2).innerText = tx.amount;
             row.insertCell(3).innerText = tx.name;
             row.insertCell(4).innerText = tx.time_str;
-            row.className = "status-new";
             let btnCell = row.insertCell(5);
             let btn = document.createElement("button");
             btn.innerText = "อนุมัติ";
@@ -186,28 +193,21 @@ async function fetchTransactions(){
                     headers:{"Content-Type":"application/json"},
                     body: JSON.stringify({id: tx.id})
                 });
-                fetchTransactions(); // refresh table
+                fetchTransactions();
             };
             btnCell.appendChild(btn);
         });
 
         // Update approved orders table
-        let approvedTable = document.getElementById("approved-orders-table");
-        approvedTable.innerHTML = `<tr>
-            <th>Transaction ID</th>
-            <th>ประเภท</th>
-            <th>จำนวน</th>
-            <th>ชื่อ/เบอร์</th>
-            <th>เวลา</th>
-        </tr>`;
+        let approvedTableBody = document.querySelector("#approved-orders-table tbody");
+        approvedTableBody.innerHTML = "";
         data.approved_orders.forEach(tx => {
-            let row = approvedTable.insertRow();
+            let row = approvedTableBody.insertRow();
             row.insertCell(0).innerText = tx.id;
             row.insertCell(1).innerText = tx.event;
             row.insertCell(2).innerText = tx.amount;
             row.insertCell(3).innerText = tx.name;
             row.insertCell(4).innerText = tx.time_str;
-            row.className = "status-approved";
         });
 
     } catch(e){
@@ -217,7 +217,7 @@ async function fetchTransactions(){
 
 // fetch ทุก 3 วินาที
 setInterval(fetchTransactions, 3000);
-fetchTransactions(); // fetch ครั้งแรกตอนโหลด
+fetchTransactions();
 </script>
 </body>
 </html>
