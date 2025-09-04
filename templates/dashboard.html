@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+    <meta charset="UTF-8">
+    <title>TrueWallet Dashboard</title>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+    <h1>รายการเงินเข้า TrueWallet</h1>
+    <div class="table-container">
+        <table>
+            <thead>
+                <tr>
+                    <th>เวลา</th>
+                    <th>จำนวนเงิน (บาท)</th>
+                    <th>ผู้ส่ง</th>
+                    <th>เบอร์</th>
+                    <th>ประเภท</th>
+                    <th>ข้อความ</th>
+                    <th>Transaction ID</th>
+                    <th>ช่องทาง</th>
+                </tr>
+            </thead>
+            <tbody>
+            {% for tx in transactions %}
+                <tr>
+                    <td>{{ tx.received_time }}</td>
+                    <td>{{ tx.amount }}</td>
+                    <td>{{ tx.sender_name or "-" }}</td>
+                    <td>{{ tx.sender_mobile or "-" }}</td>
+                    <td>{{ tx.event_type }}</td>
+                    <td>{{ tx.message or "-" }}</td>
+                    <td>{{ tx.transaction_id or "-" }}</td>
+                    <td>{{ tx.channel or "-" }}</td>
+                </tr>
+            {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</body>
+</html>
