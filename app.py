@@ -6,7 +6,7 @@ from collections import defaultdict
 app = Flask(__name__)
 
 transactions = []
-daily_summary = defaultdict(float)
+daily_summary_history = defaultdict(float)  # เก็บยอดรายวันแบบไม่รี
 ip_approver_map = {}
 
 LOG_FILE = "transactions.log"
@@ -53,21 +53,14 @@ def index():
 @app.route("/get_transactions")
 def get_transactions():
     today_str = date.today().strftime("%Y-%m-%d")
-    # ลบรายการเก่าที่อนุมัติแล้วก่อนวันปัจจุบัน
+    # ลบรายการอนุมัติเก่าจาก transactions แต่ไม่ลบยอดสรุปรายวัน
     transactions[:] = [tx for tx in transactions if not (tx["status"]=="approved" and tx["time"].strftime("%Y-%m-%d") < today_str)]
 
     new_orders = [tx for tx in transactions if tx["status"] == "new"][-20:][::-1]
     approved_orders = [tx for tx in transactions if tx["status"] == "approved"][-20:][::-1]
 
-    # ยอดรวมวันนี้
-    wallet_daily_total = sum(tx["amount"] for tx in transactions if tx["status"]=="approved" and tx["time"].strftime("%Y-%m-%d")==today_str)
-
-    # สรุปยอดรายวัน
-    daily_summary.clear()
-    for tx in transactions:
-        if tx["status"]=="approved":
-            day = tx["time"].strftime("%Y-%m-%d")
-            daily_summary[day] += tx["amount"]
+    # ยอด Wallet วันนี้จากสรุป
+    wallet_daily_total = daily_summary_history.get(today_str, 0)
 
     # แปลงข้อมูลสำหรับ Dashboard
     for tx in new_orders + approved_orders:
@@ -76,7 +69,7 @@ def get_transactions():
         tx["bank_name"] = translate_bank(tx.get("bank",""))
         tx["approver_name"] = tx.get("approver_name", "")
 
-    daily_list = [{"date": d, "total": f"{v:,.2f}"} for d,v in sorted(daily_summary.items())]
+    daily_list = [{"date": d, "total": f"{v:,.2f}"} for d,v in sorted(daily_summary_history.items())]
 
     return jsonify({
         "new_orders": new_orders,
@@ -98,6 +91,9 @@ def approve():
         if tx["id"] == txid:
             tx["status"] = "approved"
             tx["approver_name"] = approver_name
+            # อัปเดตยอดรายวัน history
+            day = tx["time"].strftime("%Y-%m-%d")
+            daily_summary_history[day] += tx["amount"]
             log_with_time(f"[UPDATE STATUS] {txid} -> approved by {approver_name} ({user_ip})")
             break
     return jsonify({"status": "success"}), 200
