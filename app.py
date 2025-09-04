@@ -1,21 +1,23 @@
 from flask import Flask, request, jsonify, render_template_string
-import os, json
+import os, json, jwt
 from datetime import datetime, date
 from collections import defaultdict
 
 app = Flask(__name__)
 
-transactions = []  # {"id":.., "event":.., "amount":.., "name":.., "bank":.., "status":.., "time":..}
+transactions = []  # เก็บรายการทั้งหมด
 daily_summary = defaultdict(float)  # เก็บยอดรวมต่อวัน {"YYYY-MM-DD": total_amount}
 
 LOG_FILE = "transactions.log"
+SECRET_KEY = "8d2909e5a59bc24bbf14059e9e591402"  # ใช้ Secret ของคุณ
 
+# แปลงประเภทเหตุการณ์
 def translate_event_type(event_type):
     mapping = {
         "P2P": "วอลเล็ตโอนเงิน",
-        "TOPUP": "เติมเงิน",
-        "PAYMENT": "จ่ายเงิน",
-        "WITHDRAW": "ถอนเงิน"
+        "MONEY_LINK": "รับจากซองทรูมันนี่",
+        "DIRECT_TOPUP": "เติมเงินร้านค้า/ธนาคาร",
+        "PROMPTPAY_IN": "เติมเงินพร้อมเพย์"
     }
     return mapping.get(event_type, event_type)
 
@@ -53,7 +55,6 @@ def get_transactions():
         tx["time_str"] = tx["time"].strftime("%Y-%m-%d %H:%M:%S")
         tx["amount_str"] = f"{tx['amount']:,.2f}"
 
-    # daily summary list sorted
     daily_list = [{"date": d, "total": f"{v:,.2f}"} for d, v in sorted(daily_summary.items())]
 
     return jsonify({
@@ -88,19 +89,27 @@ def webhook():
             except:
                 data = {}
 
-        if not data:
-            log_with_time("[WEBHOOK ERROR] ไม่มีข้อมูล JSON หรือ Form")
-            return jsonify({"status":"error","message":"No data"}), 400
+        if not data or "message" not in data:
+            log_with_time("[WEBHOOK ERROR] ไม่มี field message")
+            return jsonify({"status":"error","message":"No message"}), 400
 
-        txid = data.get("transactionId") or f"TX{len(transactions)+1}"
-        event_type = translate_event_type(data.get("event") or data.get("type") or "Unknown")
+        token = data["message"]
         try:
-            amount = float(str(data.get("amount", "0")).replace(",", ""))
-        except:
-            amount = 0
-        name = data.get("accountName") or data.get("name") or "-"
-        bank = data.get("bankCode") or data.get("bank") or "-"
-        status = str(data.get("status", "new")).lower()
+            decoded = jwt.decode(token, SECRET_KEY, algorithms=["HS256"], options={"verify_iat": False})
+        except jwt.InvalidTokenError as e:
+            log_with_time("[WEBHOOK ERROR] Invalid JWT", e)
+            return jsonify({"status":"invalid","message":str(e)}), 400
+
+        # แปลงข้อมูลจาก JWT payload
+        txid = decoded.get("transaction_id") or f"TX{len(transactions)+1}"
+        event_type = translate_event_type(decoded.get("event_type", "Unknown"))
+        amount = int(decoded.get("amount", 0)) / 100  # แปลงสตางค์เป็นบาท
+        sender_name = decoded.get("sender_name") or "-"
+        sender_mobile = decoded.get("sender_mobile") or "-"
+        name = f"{sender_name} / {sender_mobile}" if sender_mobile else sender_name
+        bank = decoded.get("channel") or "-"
+        message_text = decoded.get("message") or ""
+        status = "new"
         now = datetime.now()
 
         tx = {
@@ -110,7 +119,8 @@ def webhook():
             "name": name,
             "bank": bank,
             "status": status,
-            "time": now
+            "time": now,
+            "message": message_text
         }
         transactions.append(tx)
         log_with_time("[WEBHOOK RECEIVED]", tx)
@@ -121,7 +131,7 @@ def webhook():
         return jsonify({"status":"error","message":str(e)}), 500
 
 # ================== HTML ==================
-DASHBOARD_HTML = """
+DASHBOARD_HTML = """  
 <!DOCTYPE html>
 <html>
 <head>
@@ -154,6 +164,7 @@ DASHBOARD_HTML = """
                 <th>ชื่อ/เบอร์</th>
                 <th>เวลา</th>
                 <th>อนุมัติ</th>
+                <th>ข้อความ</th>
             </tr>
             </thead>
             <tbody></tbody>
@@ -170,6 +181,7 @@ DASHBOARD_HTML = """
                 <th>จำนวน</th>
                 <th>ชื่อ/เบอร์</th>
                 <th>เวลา</th>
+                <th>ข้อความ</th>
             </tr>
             </thead>
             <tbody></tbody>
@@ -211,11 +223,9 @@ async function fetchTransactions(){
         let resp = await fetch("/get_transactions");
         let data = await resp.json();
 
-        // Update wallet info
         document.getElementById("wallet-info").innerText =
             `ยอด Wallet วันนี้: ${data.wallet_daily_total} บาท | ย้อนหลัง: ${data.wallet_history} บาท`;
 
-        // Update new orders table
         let newTableBody = document.querySelector("#new-orders-table tbody");
         newTableBody.innerHTML = "";
         data.new_orders.forEach(tx => {
@@ -237,9 +247,9 @@ async function fetchTransactions(){
                 fetchTransactions();
             };
             btnCell.appendChild(btn);
+            row.insertCell(6).innerText = tx.message;
         });
 
-        // Update approved orders table
         let approvedTableBody = document.querySelector("#approved-orders-table tbody");
         approvedTableBody.innerHTML = "";
         data.approved_orders.forEach(tx => {
@@ -249,9 +259,9 @@ async function fetchTransactions(){
             row.insertCell(2).innerText = tx.amount_str;
             row.insertCell(3).innerText = tx.name;
             row.insertCell(4).innerText = tx.time_str;
+            row.insertCell(5).innerText = tx.message;
         });
 
-        // Update daily summary table
         let dailyTableBody = document.querySelector("#daily-summary-table tbody");
         dailyTableBody.innerHTML = "";
         data.daily_summary.forEach(day => {
@@ -265,7 +275,6 @@ async function fetchTransactions(){
     }
 }
 
-// fetch ทุก 3 วินาที
 setInterval(fetchTransactions, 3000);
 fetchTransactions();
 </script>
