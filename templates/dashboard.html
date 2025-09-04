@@ -1,41 +1,49 @@
-<!DOCTYPE html>
-<html lang="th">
+<!doctype html>
+<html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <title>TrueWallet Dashboard</title>
-    <link rel="stylesheet" href="/static/style.css">
+<meta charset="UTF-8">
+<title>TrueWallet Dashboard</title>
+<style>
+body { font-family: Arial, sans-serif; margin: 20px; background:#f4f4f4; }
+h1 { text-align:center; }
+table { width: 100%; border-collapse: collapse; margin-top:20px; background:#fff; }
+th, td { padding: 8px; border: 1px solid #ddd; text-align: left; }
+th { background-color: #4CAF50; color: white; position: sticky; top:0; }
+tr:nth-child(even){background-color: #f2f2f2;}
+.container { max-width: 1200px; margin: auto; overflow-x:auto; }
+</style>
 </head>
 <body>
-    <h1>รายการเงินเข้า TrueWallet</h1>
-    <div class="table-container">
-        <table>
-            <thead>
-                <tr>
-                    <th>เวลา</th>
-                    <th>จำนวนเงิน (บาท)</th>
-                    <th>ผู้ส่ง</th>
-                    <th>เบอร์</th>
-                    <th>ประเภท</th>
-                    <th>ข้อความ</th>
-                    <th>Transaction ID</th>
-                    <th>ช่องทาง</th>
-                </tr>
-            </thead>
-            <tbody>
-            {% for tx in transactions %}
-                <tr>
-                    <td>{{ tx.received_time }}</td>
-                    <td>{{ tx.amount }}</td>
-                    <td>{{ tx.sender_name or "-" }}</td>
-                    <td>{{ tx.sender_mobile or "-" }}</td>
-                    <td>{{ tx.event_type }}</td>
-                    <td>{{ tx.message or "-" }}</td>
-                    <td>{{ tx.transaction_id or "-" }}</td>
-                    <td>{{ tx.channel or "-" }}</td>
-                </tr>
-            {% endfor %}
-            </tbody>
-        </table>
-    </div>
+<div class="container">
+<h1>รายการเงินเข้า TrueWallet</h1>
+<table>
+<thead>
+<tr>
+<th>เวลา</th>
+<th>ประเภท</th>
+<th>จำนวน</th>
+<th>เบอร์ผู้ส่ง</th>
+<th>ชื่อผู้ส่ง</th>
+<th>ข้อความ</th>
+<th>ช่องทาง</th>
+<th>Transaction ID</th>
+</tr>
+</thead>
+<tbody>
+{% for tx in transactions %}
+<tr>
+<td>{{ tx.received_time }}</td>
+<td>{{ tx.event_type }}</td>
+<td>{{ tx.amount }}</td>
+<td>{{ tx.sender_mobile|default('-') }}</td>
+<td>{{ tx.sender_name|default('-') }}</td>
+<td>{{ tx.message|default('-') }}</td>
+<td>{{ tx.channel|default('-') }}</td>
+<td>{{ tx.transaction_id|default('-') }}</td>
+</tr>
+{% endfor %}
+</tbody>
+</table>
+</div>
 </body>
 </html>
