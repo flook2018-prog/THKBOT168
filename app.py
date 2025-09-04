@@ -1,23 +1,37 @@
 from flask import Flask, request, jsonify, render_template_string
 import os
+from datetime import datetime
 
 app = Flask(__name__)
 
-# ดึง SECRET_KEY จาก Environment ของ Railway
 SECRET_KEY = os.environ.get("SECRET_KEY", "local_dev_secret")
 
-# ตัวอย่างเก็บรายการ
-transactions = []  # แต่ละรายการเป็น dict: {"event":.., "amount":.., "status":..}
+# เก็บรายการเป็น dict
+transactions = []
 
-def translate_event_type(event_type):
-    mapping = {
-        "P2P": "วอลเล็ตโอนเงิน",
-        "TOPUP": "เติมเงิน",
-        "PAYMENT": "จ่ายเงิน"
-    }
-    return mapping.get(event_type, event_type)
+def translate_event_type(event_type, bank_code=None):
+    # Wallet / Topup / Payment
+    if event_type in ["P2P", "TOPUP"]:
+        return "วอลเล็ต"
+    elif event_type == "PAYMENT":
+        return "ชำระเงิน"
+    # ธนาคาร
+    elif event_type == "BANK" and bank_code:
+        bank_mapping = {
+            "BAY": "กรุงเทพ",
+            "SCB": "ไทยพาณิชย์",
+            "KBANK": "กสิกร",
+            "KTB": "กรุงไทย",
+            "TMB": "ทหารไทย",
+            "GSB": "ออมสิน",
+            "BBL": "กรุงเทพ",
+            "CIMB": "CIMB",
+            # เพิ่มธนาคารอื่นได้ตามต้องการ
+        }
+        return bank_mapping.get(bank_code, "ไม่ระบุธนาคาร")
+    else:
+        return "อื่น ๆ"
 
-# หน้าเว็บหลัก
 @app.route("/")
 def index():
     html = """
@@ -51,6 +65,7 @@ def index():
                     rows[i].style.display = match ? "" : "none";
                 }
             }
+            setTimeout(() => { window.location.reload(); }, 5000); // auto-refresh ทุก 5 วิ
         </script>
     </head>
     <body>
@@ -58,14 +73,20 @@ def index():
         <input type="text" id="searchInput" onkeyup="filterTable()" placeholder="ค้นหารายการ...">
         <table id="txTable">
             <tr>
+                <th>Transaction ID</th>
                 <th>ประเภท</th>
                 <th>จำนวน</th>
+                <th>ชื่อ / เบอร์</th>
+                <th>เวลา</th>
                 <th>สถานะ</th>
             </tr>
             {% for tx in transactions %}
             <tr>
+                <td>{{ tx.txid }}</td>
                 <td>{{ tx.event }}</td>
-                <td>{{ tx.amount }} บาท</td>
+                <td>{{ "%.2f"|format(tx.amount) }}</td>
+                <td>{{ tx.name_phone }}</td>
+                <td>{{ tx.time }}</td>
                 <td class="status-{{ tx.status }}">{{ tx.status|capitalize }}</td>
             </tr>
             {% endfor %}
@@ -75,7 +96,6 @@ def index():
     """
     return render_template_string(html, transactions=transactions)
 
-# Webhook สำหรับ TrueWallet
 @app.route("/truewallet/webhook", methods=["POST"])
 def webhook():
     try:
@@ -83,14 +103,30 @@ def webhook():
         if not data:
             return jsonify({"status": "error", "message": "ไม่มีข้อมูล JSON"}), 400
 
-        event_type = translate_event_type(data.get("event", "Unknown"))
-        amount = data.get("amount", 0)
-        status = data.get("status", "new")  # รับค่า status จาก webhook ถ้ามี
+        event_type_raw = data.get("event", "Other")
+        bank_code = data.get("bank_code")
+        event_type = translate_event_type(event_type_raw, bank_code)
+
+        amount = float(data.get("amount", 0))
+        status = data.get("status", "new").lower()
+        txid = data.get("txid", "N/A")
+        timestamp = data.get("timestamp")
+        time_str = datetime.fromtimestamp(timestamp).strftime("%Y-%m-%d %H:%M:%S") if timestamp else datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+        if event_type == "วอลเล็ต":
+            name = data.get("name", "-")
+            phone = data.get("phone", "-")
+            name_phone = f"{name} / {phone}"
+        else:
+            name_phone = "-"
 
         transactions.append({
+            "txid": txid,
             "event": event_type,
             "amount": amount,
-            "status": status.lower()  # new / approved / rejected
+            "name_phone": name_phone,
+            "time": time_str,
+            "status": status
         })
 
         return jsonify({"status": "success"}), 200
