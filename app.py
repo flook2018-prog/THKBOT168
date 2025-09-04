@@ -113,4 +113,115 @@ DASHBOARD_HTML = """
         th { background: #007bff; color: white; }
         tr:hover { background-color: #f9f9f9; }
         .scroll-box { max-height: 400px; overflow-y: auto; margin-bottom: 20px; }
-        button { padding:
+        button { padding: 6px 12px; border: none; border-radius: 6px; cursor: pointer; background: green; color: white; }
+        .status-new { color: orange; font-weight: bold; }
+        .status-approved { color: green; font-weight: bold; }
+    </style>
+</head>
+<body>
+    <h1>THKBot168 Dashboard (Realtime)</h1>
+    <h2 id="wallet-info">ยอด Wallet วันนี้: 0 บาท | ย้อนหลัง: 0 บาท</h2>
+
+    <h2>รายการใหม่ (New Orders)</h2>
+    <div class="scroll-box">
+        <table id="new-orders-table">
+            <tr>
+                <th>Transaction ID</th>
+                <th>ประเภท</th>
+                <th>จำนวน</th>
+                <th>ชื่อ/เบอร์</th>
+                <th>เวลา</th>
+                <th>อนุมัติ</th>
+            </tr>
+        </table>
+    </div>
+
+    <h2>รายการที่อนุมัติแล้ว (Approved Orders)</h2>
+    <div class="scroll-box">
+        <table id="approved-orders-table">
+            <tr>
+                <th>Transaction ID</th>
+                <th>ประเภท</th>
+                <th>จำนวน</th>
+                <th>ชื่อ/เบอร์</th>
+                <th>เวลา</th>
+            </tr>
+        </table>
+    </div>
+
+<script>
+async function fetchTransactions(){
+    try{
+        let resp = await fetch("/get_transactions");
+        let data = await resp.json();
+
+        // Update wallet info
+        document.getElementById("wallet-info").innerText =
+            `ยอด Wallet วันนี้: ${data.wallet_daily_total} บาท | ย้อนหลัง: ${data.wallet_history} บาท`;
+
+        // Update new orders table
+        let newTable = document.getElementById("new-orders-table");
+        newTable.innerHTML = `<tr>
+            <th>Transaction ID</th>
+            <th>ประเภท</th>
+            <th>จำนวน</th>
+            <th>ชื่อ/เบอร์</th>
+            <th>เวลา</th>
+            <th>อนุมัติ</th>
+        </tr>`;
+        data.new_orders.forEach(tx => {
+            let row = newTable.insertRow();
+            row.insertCell(0).innerText = tx.id;
+            row.insertCell(1).innerText = tx.event;
+            row.insertCell(2).innerText = tx.amount;
+            row.insertCell(3).innerText = tx.name;
+            row.insertCell(4).innerText = tx.time_str;
+            row.className = "status-new";
+            let btnCell = row.insertCell(5);
+            let btn = document.createElement("button");
+            btn.innerText = "อนุมัติ";
+            btn.onclick = async ()=> {
+                await fetch("/approve", {
+                    method:"POST",
+                    headers:{"Content-Type":"application/json"},
+                    body: JSON.stringify({id: tx.id})
+                });
+                fetchTransactions(); // refresh table
+            };
+            btnCell.appendChild(btn);
+        });
+
+        // Update approved orders table
+        let approvedTable = document.getElementById("approved-orders-table");
+        approvedTable.innerHTML = `<tr>
+            <th>Transaction ID</th>
+            <th>ประเภท</th>
+            <th>จำนวน</th>
+            <th>ชื่อ/เบอร์</th>
+            <th>เวลา</th>
+        </tr>`;
+        data.approved_orders.forEach(tx => {
+            let row = approvedTable.insertRow();
+            row.insertCell(0).innerText = tx.id;
+            row.insertCell(1).innerText = tx.event;
+            row.insertCell(2).innerText = tx.amount;
+            row.insertCell(3).innerText = tx.name;
+            row.insertCell(4).innerText = tx.time_str;
+            row.className = "status-approved";
+        });
+
+    } catch(e){
+        console.error("Error fetching transactions:", e);
+    }
+}
+
+// fetch ทุก 3 วินาที
+setInterval(fetchTransactions, 3000);
+fetchTransactions(); // fetch ครั้งแรกตอนโหลด
+</script>
+</body>
+</html>
+"""
+
+if __name__ == "__main__":
+    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
