@@ -2,6 +2,7 @@ from flask import Flask, request, jsonify, render_template_string
 import os, json, jwt, random
 from datetime import datetime, date
 from collections import defaultdict
+import threading, time
 
 app = Flask(__name__)
 
@@ -10,7 +11,17 @@ daily_summary = defaultdict(float)  # เก็บยอดรวมต่อว
 ip_approver_map = {}  # เก็บ IP -> ชื่อผู้อนุมัติ
 
 LOG_FILE = "transactions.log"
-SECRET_KEY = "8d2909e5a59bc24bbf14059e9e591402"  # Secret ของคุณ
+SECRET_KEY = "8d2909e5a59bc24bbf14059e9e591402"
+APPROVER_FILE = "approvers.json"
+
+# โหลดชื่อผู้อนุมัติจากไฟล์
+if os.path.exists(APPROVER_FILE):
+    with open(APPROVER_FILE, "r", encoding="utf-8") as f:
+        ip_approver_map = json.load(f)
+
+def save_approvers():
+    with open(APPROVER_FILE, "w", encoding="utf-8") as f:
+        json.dump(ip_approver_map, f, ensure_ascii=False, indent=2)
 
 # แปลงประเภทเหตุการณ์
 def translate_event_type(event_type):
@@ -44,19 +55,12 @@ def get_transactions():
     new_orders = [tx for tx in transactions if tx["status"] == "new"][-20:][::-1]
     approved_orders = [tx for tx in transactions if tx["status"] == "approved"][-20:][::-1]
 
-    # อัปเดต daily_summary รวมทุกช่องทาง
+    # อัปเดต daily_summary
     daily_summary.clear()
     for tx in transactions:
         if tx["status"] == "approved":
             day = tx["time"].strftime("%Y-%m-%d")
             daily_summary[day] += tx["amount"]
-
-    # wallet_daily_total รวมทุก approved ของวันนี้
-    wallet_daily_total = sum(
-        tx["amount"] for tx in transactions
-        if tx["status"] == "approved" and
-           tx["time"].strftime("%Y-%m-%d") == today_str
-    )
 
     # format transactions
     for tx in new_orders + approved_orders:
@@ -65,6 +69,13 @@ def get_transactions():
         tx["approver_name"] = tx.get("approver_name", "")
 
     daily_list = [{"date": d, "total": f"{v:,.2f}"} for d, v in sorted(daily_summary.items())]
+
+    # ยอด Wallet วันนี้
+    wallet_daily_total = sum(
+        tx["amount"] for tx in transactions
+        if tx["status"] == "approved" and
+           tx["time"].strftime("%Y-%m-%d") == today_str
+    )
 
     return jsonify({
         "new_orders": new_orders,
@@ -77,9 +88,9 @@ def get_transactions():
 def approve():
     txid = request.json.get("id")
     user_ip = request.remote_addr or "unknown"
-    # กำหนดชื่อผู้อนุมัติจาก IP
     if user_ip not in ip_approver_map:
         ip_approver_map[user_ip] = random_english_name()
+        save_approvers()
     approver_name = ip_approver_map[user_ip]
 
     for tx in transactions:
@@ -122,8 +133,16 @@ def webhook():
         sender_mobile = decoded.get("sender_mobile") or "-"
         name = f"{sender_name} / {sender_mobile}" if sender_mobile else sender_name
         bank = decoded.get("channel") or "-"
+        # ใช้เวลาจากข้อมูลลูกค้า หากไม่มีใช้เวลาปัจจุบัน
+        ts_str = decoded.get("time")  # รูปแบบ "YYYY-MM-DD HH:MM:SS"
+        if ts_str:
+            try:
+                now = datetime.strptime(ts_str, "%Y-%m-%d %H:%M:%S")
+            except:
+                now = datetime.now()
+        else:
+            now = datetime.now()
         status = "new"
-        now = datetime.now()
 
         tx = {
             "id": txid,
@@ -142,183 +161,134 @@ def webhook():
         log_with_time("[WEBHOOK EXCEPTION]", e)
         return jsonify({"status":"error","message":str(e)}), 500
 
+# ================== ลบรายการอนุมัติทุก 00:00 ==================
+def clear_approved_daily():
+    while True:
+        now = datetime.now()
+        if now.hour == 0 and now.minute == 0:
+            global transactions
+            transactions = [tx for tx in transactions if tx["status"] != "approved"]
+            log_with_time("[DAILY CLEAR] ลบรายการอนุมัติทั้งหมด")
+            time.sleep(60)
+        else:
+            time.sleep(30)
+
+threading.Thread(target=clear_approved_daily, daemon=True).start()
+
 # ================== HTML ==================
 DASHBOARD_HTML = """  
 <!DOCTYPE html>
 <html>
 <head>
-    <title>THKBot168 Dashboard</title>
-    <style>
-        body {
-            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-            background: #f0f2f5;
-            margin: 0; padding: 20px;
-            color: #333;
-        }
-        h1, h2 { text-align: center; margin-bottom: 15px; }
-        .scroll-box {
-            max-height: 400px;
-            overflow-y: auto;
-            margin-bottom: 25px;
-            background: #fff;
-            border-radius: 12px;
-            box-shadow: 0 4px 12px rgba(0,0,0,0.08);
-            padding: 10px;
-            scroll-behavior: smooth;
-        }
-        table { width: 100%; border-collapse: collapse; }
-        th, td { padding: 12px; text-align: center; }
-        th {
-            position: sticky;
-            top: 0;
-            z-index: 2;
-            background: linear-gradient(90deg,#4a90e2,#007bff);
-            color: white;
-            box-shadow: 0 2px 5px rgba(0,0,0,0.1);
-        }
-        tr:hover { background-color: #f1f5f9; transition: background 0.3s; }
-        button {
-            padding: 6px 12px;
-            border: none;
-            border-radius: 6px;
-            cursor: pointer;
-            background: #28a745;
-            color: white;
-            transition: all 0.3s ease;
-        }
-        button:hover { background: #218838; transform: scale(1.05); }
-        ::-webkit-scrollbar { width: 8px; }
-        ::-webkit-scrollbar-thumb { background-color: rgba(0,0,0,0.2); border-radius: 4px; }
-        ::-webkit-scrollbar-track { background: transparent; }
-    </style>
+<title>THKBot168 Dashboard</title>
+<style>
+body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background: #f0f2f5; margin:0; padding:20px; color:#333;}
+h1,h2{text-align:center;margin-bottom:15px;}
+.scroll-box{max-height:400px;overflow-y:auto;margin-bottom:25px;background:#fff;border-radius:12px;box-shadow:0 4px 12px rgba(0,0,0,0.08);padding:10px;scroll-behavior:smooth;}
+table{width:100%;border-collapse:collapse;}
+th,td{padding:12px;text-align:center;}
+th{position:sticky;top:0;z-index:2;background:linear-gradient(90deg,#4a90e2,#007bff);color:white;box-shadow:0 2px 5px rgba(0,0,0,0.1);}
+tr:hover{background-color:#f1f5f9;transition:background 0.3s;}
+button{padding:6px 12px;border:none;border-radius:6px;cursor:pointer;background:#28a745;color:white;transition:all 0.3s ease;}
+button:hover{background:#218838;transform:scale(1.05);}
+::-webkit-scrollbar{width:8px;}
+::-webkit-scrollbar-thumb{background-color:rgba(0,0,0,0.2);border-radius:4px;}
+::-webkit-scrollbar-track{background:transparent;}
+</style>
 </head>
 <body>
-    <h1>THKBot168 Dashboard (Realtime)</h1>
-    <h2>วันที่-เวลา: <span id="current-datetime"></span></h2>
-    <h2><span id="wallet-info">0 บาท</span></h2>
+<h1>THKBot168 Dashboard (Realtime)</h1>
+<h2>วันที่-เวลา: <span id="current-datetime"></span></h2>
+<h2><span id="wallet-info">0 บาท</span></h2>
 
-    <h2>รายการใหม่ (New Orders)</h2>
-    <div class="scroll-box">
-        <table id="new-orders-table">
-            <thead>
-            <tr>
-                <th>Transaction ID</th>
-                <th>ประเภท</th>
-                <th>จำนวน</th>
-                <th>ชื่อ/เบอร์</th>
-                <th>เวลา</th>
-                <th>อนุมัติ</th>
-            </tr>
-            </thead>
-            <tbody></tbody>
-        </table>
-    </div>
+<h2>รายการใหม่ (New Orders)</h2>
+<div class="scroll-box">
+<table id="new-orders-table">
+<thead>
+<tr><th>Transaction ID</th><th>ประเภท</th><th>จำนวน</th><th>ชื่อ/เบอร์</th><th>เวลา</th><th>อนุมัติ</th></tr>
+</thead>
+<tbody></tbody>
+</table>
+</div>
 
-    <h2>รายการที่อนุมัติแล้ว (Approved Orders)</h2>
-    <div class="scroll-box">
-        <table id="approved-orders-table">
-            <thead>
-            <tr>
-                <th>Transaction ID</th>
-                <th>ประเภท</th>
-                <th>จำนวน</th>
-                <th>ชื่อ/เบอร์</th>
-                <th>เวลา</th>
-                <th>ผู้อนุมัติ</th>
-            </tr>
-            </thead>
-            <tbody></tbody>
-        </table>
-    </div>
+<h2>รายการที่อนุมัติแล้ว (Approved Orders)</h2>
+<div class="scroll-box">
+<table id="approved-orders-table">
+<thead>
+<tr><th>Transaction ID</th><th>ประเภท</th><th>จำนวน</th><th>ชื่อ/เบอร์</th><th>เวลา</th><th>ผู้อนุมัติ</th></tr>
+</thead>
+<tbody></tbody>
+</table>
+</div>
 
-    <h2>ยอด Wallet รายวัน (Daily Summary)</h2>
-    <div class="scroll-box">
-        <table id="daily-summary-table">
-            <thead>
-            <tr>
-                <th>วันที่</th>
-                <th>ยอดรวม (บาท)</th>
-            </tr>
-            </thead>
-            <tbody></tbody>
-        </table>
-    </div>
+<h2>ยอดรวมรายวัน</h2>
+<div class="scroll-box">
+<table id="daily-summary-table">
+<thead><tr><th>วันที่</th><th>ยอดรวม (บาท)</th></tr></thead>
+<tbody></tbody>
+</table>
+</div>
 
 <script>
 function updateCurrentTime(){
-    const now = new Date();
-    const y = now.getFullYear();
-    const m = String(now.getMonth()+1).padStart(2,'0');
-    const d = String(now.getDate()).padStart(2,'0');
-    const hh = String(now.getHours()).padStart(2,'0');
-    const mm = String(now.getMinutes()).padStart(2,'0');
-    const ss = String(now.getSeconds()).padStart(2,'0');
-    document.getElementById("current-datetime").innerText =
-        `${y}-${m}-${d} ${hh}:${mm}:${ss}`;
+    const now=new Date();
+    const y=now.getFullYear();
+    const m=String(now.getMonth()+1).padStart(2,'0');
+    const d=String(now.getDate()).padStart(2,'0');
+    const hh=String(now.getHours()).padStart(2,'0');
+    const mm=String(now.getMinutes()).padStart(2,'0');
+    const ss=String(now.getSeconds()).padStart(2,'0');
+    document.getElementById("current-datetime").innerText=`${y}-${m}-${d} ${hh}:${mm}:${ss}`;
 }
-setInterval(updateCurrentTime, 1000);
-updateCurrentTime();
+setInterval(updateCurrentTime,1000);updateCurrentTime();
 
 async function fetchTransactions(){
-    try{
-        let resp = await fetch("/get_transactions");
-        let data = await resp.json();
+try{
+let resp=await fetch("/get_transactions");
+let data=await resp.json();
+document.getElementById("wallet-info").innerText=`💰💰 ยอด Wallet วันนี้: ${data.wallet_daily_total} บาท`;
 
-        document.getElementById("wallet-info").innerText =
-            `💰💰 ยอด Wallet วันนี้: ${data.wallet_daily_total} บาท`;
+// New orders
+let newTableBody=document.querySelector("#new-orders-table tbody");newTableBody.innerHTML="";
+data.new_orders.forEach(tx=>{
+let row=newTableBody.insertRow();
+row.insertCell(0).innerText=tx.id;
+row.insertCell(1).innerText=tx.event;
+row.insertCell(2).innerText=tx.amount_str;
+row.insertCell(3).innerText=tx.name;
+row.insertCell(4).innerText=tx.time_str;
+let btnCell=row.insertCell(5);
+let btn=document.createElement("button");
+btn.innerText="อนุมัติ";
+btn.onclick=async()=>{
+await fetch("/approve",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({id:tx.id})});
+fetchTransactions();};
+btnCell.appendChild(btn);
+});
 
-        // New orders
-        let newTableBody = document.querySelector("#new-orders-table tbody");
-        newTableBody.innerHTML = "";
-        data.new_orders.forEach(tx => {
-            let row = newTableBody.insertRow();
-            row.insertCell(0).innerText = tx.id;
-            row.insertCell(1).innerText = tx.event;
-            row.insertCell(2).innerText = tx.amount_str;
-            row.insertCell(3).innerText = tx.name;
-            row.insertCell(4).innerText = tx.time_str;
-            let btnCell = row.insertCell(5);
-            let btn = document.createElement("button");
-            btn.innerText = "อนุมัติ";
-            btn.onclick = async ()=> {
-                await fetch("/approve", {
-                    method:"POST",
-                    headers:{"Content-Type":"application/json"},
-                    body: JSON.stringify({id: tx.id})
-                });
-                await fetchTransactions();
-            };
-            btnCell.appendChild(btn);
-        });
+// Approved orders
+let approvedTableBody=document.querySelector("#approved-orders-table tbody");approvedTableBody.innerHTML="";
+data.approved_orders.forEach(tx=>{
+let row=approvedTableBody.insertRow();
+row.insertCell(0).innerText=tx.id;
+row.insertCell(1).innerText=tx.event;
+row.insertCell(2).innerText=tx.amount_str;
+row.insertCell(3).innerText=tx.name;
+row.insertCell(4).innerText=tx.time_str;
+row.insertCell(5).innerText=tx.approver_name;
+});
 
-        // Approved orders
-        let approvedTableBody = document.querySelector("#approved-orders-table tbody");
-        approvedTableBody.innerHTML = "";
-        data.approved_orders.forEach(tx => {
-            let row = approvedTableBody.insertRow();
-            row.insertCell(0).innerText = tx.id;
-            row.insertCell(1).innerText = tx.event;
-            row.insertCell(2).innerText = tx.amount_str;
-            row.insertCell(3).innerText = tx.name;
-            row.insertCell(4).innerText = tx.time_str;
-            row.insertCell(5).innerText = tx.approver_name;
-        });
+// Daily summary
+let dailyTableBody=document.querySelector("#daily-summary-table tbody");dailyTableBody.innerHTML="";
+data.daily_summary.forEach(day=>{
+let row=dailyTableBody.insertRow();
+row.insertCell(0).innerText=day.date;
+row.insertCell(1).innerText=day.total;
+});
 
-        // Daily summary
-        let dailyTableBody = document.querySelector("#daily-summary-table tbody");
-        dailyTableBody.innerHTML = "";
-        data.daily_summary.forEach(day => {
-            let row = dailyTableBody.insertRow();
-            row.insertCell(0).innerText = day.date;
-            row.insertCell(1).innerText = day.total;
-        });
-
-    } catch(e){
-        console.error("Error fetching transactions:", e);
-    }
+}catch(e){console.error("Error fetching transactions:",e);}
 }
-
-setInterval(fetchTransactions, 3000);
+setInterval(fetchTransactions,3000);
 fetchTransactions();
 </script>
 </body>
@@ -326,4 +296,4 @@ fetchTransactions();
 """
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
+    app.run(host="0.0.0.0", port=int(os.environ.get("PORT",5000)))
