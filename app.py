@@ -167,7 +167,7 @@ DASHBOARD_HTML = """
     <h1>THKBot168 Dashboard (Realtime)</h1>
 
     <h2>วันที่-เวลา: <span id="current-datetime"></span></h2>
-    <h2>💰💰 ยอด Wallet วันนี้: <span id="wallet-info">0 บาท</span></h2>
+    <h2> <span id="wallet-info">0 บาท</span></h2>
 
     <h2>รายการใหม่ (New Orders)</h2>
     <div class="scroll-box">
