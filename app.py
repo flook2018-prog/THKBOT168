@@ -27,14 +27,13 @@ def translate_event_type(event_type, bank_code=None):
     else:
         return "อื่น ๆ"
 
-# แปลง timestamp
 def ts_to_str(ts):
     try:
         return datetime.fromtimestamp(float(ts)).strftime("%Y-%m-%d %H:%M:%S")
     except:
         return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
-# หน้า Login
+# Login
 @app.route("/", methods=["GET","POST"])
 def login():
     if request.method=="POST":
@@ -73,7 +72,7 @@ def dashboard():
                                   wallet_history=wallet_history,
                                   ts_to_str=ts_to_str)
 
-# Webhook รับรายการ
+# Webhook
 @app.route("/truewallet/webhook", methods=["POST"])
 def webhook():
     data = request.json
@@ -107,7 +106,7 @@ def webhook():
     transactions.append(tx)
     return jsonify({"status":"success"}),200
 
-# อนุมัติรายการ
+# Approve
 @app.route("/approve/<txid>", methods=["POST"])
 def approve(txid):
     username = session.get("username")
@@ -124,7 +123,7 @@ def approve(txid):
             return jsonify({"status":"success"}),200
     return jsonify({"status":"error","message":"ไม่พบรายการหรืออนุมัติแล้ว"}),404
 
-# Background reset ยอด Wallet หลัง 00:00
+# Background reset daily wallet
 def reset_daily_wallet():
     global wallet_daily_total, wallet_history
     last_date = datetime.now().date()
@@ -138,7 +137,7 @@ def reset_daily_wallet():
 
 threading.Thread(target=reset_daily_wallet,daemon=True).start()
 
-# HTML Login
+# Login HTML
 login_html = """
 <!DOCTYPE html>
 <html>
@@ -166,7 +165,7 @@ button:hover{background:#45a049;}
 </html>
 """
 
-# HTML Dashboard
+# Dashboard HTML (แก้ปัญหา triple-quote)
 dashboard_html = """
 <!DOCTYPE html>
 <html>
@@ -185,26 +184,91 @@ button.approve-btn:hover{background:#45a049;}
 .summary-box{background:white;padding:10px;border-radius:5px;margin-bottom:10px;}
 </style>
 <script>
-// แจ้งเตือนรายการใหม่
 let knownTxIds = {{ new_orders | map(attribute='txid') | list | safe }};
 function playSound(){let audio=new Audio("https://www.soundjay.com/buttons/sounds/button-3.mp3");audio.play();}
-function showPopup(message){let popup=document.createElement('div');popup.innerText=message;popup.style.position='fixed';popup.style.top='20px';popup.style.right='20px';popup.style.background='orange';popup.style.color='white';popup.style.padding='10px';popup.style.borderRadius='5px';popup.style.zIndex='9999';document.body.appendChild(popup);setTimeout(()=>popup.remove(),5000);}
+function showPopup(message){
+    let popup=document.createElement('div');
+    popup.innerText=message;
+    popup.style.position='fixed';
+    popup.style.top='20px';
+    popup.style.right='20px';
+    popup.style.background='orange';
+    popup.style.color='white';
+    popup.style.padding='10px';
+    popup.style.borderRadius='5px';
+    popup.style.zIndex='9999';
+    document.body.appendChild(popup);
+    setTimeout(()=>popup.remove(),5000);
+}
 function checkNewOrders(){
-fetch('/dashboard').then(res=>res.text()).then(html=>{
-let parser=new DOMParser();
-let doc=parser.parseFromString(html,'text/html');
-let rows=doc.querySelectorAll('#new-orders tr');
-rows.forEach(row=>{
-let txid=row.cells[0].innerText;
-if(!knownTxIds.includes(txid)){
-knownTxIds.push(txid);
-playSound();
-showPopup('รายการใหม่เข้ามา: '+txid);
-}});});}
+    fetch('/dashboard').then(res=>res.text()).then(html=>{
+        let parser=new DOMParser();
+        let doc=parser.parseFromString(html,'text/html');
+        let rows=doc.querySelectorAll('#new-orders tr');
+        rows.forEach(row=>{
+            let txid=row.cells[0].innerText;
+            if(!knownTxIds.includes(txid)){
+                knownTxIds.push(txid);
+                playSound();
+                showPopup('รายการใหม่เข้ามา: '+txid);
+            }
+        });
+    });
+}
 function approveTx(txid){fetch('/approve/'+txid,{method:'POST'}).then(res=>res.json()).then(data=>{if(data.status=='success')location.reload();else alert(data.message);});}
 setInterval(()=>{location.reload(); checkNewOrders();},5000);
 </script>
 </head>
 <body>
 <h1>สวัสดี {{username}}</h1>
-<div class="summary-box"><b>ยอดฝากวอเลทวันนี้:
+<div class="summary-box"><b>ยอดฝากวอเลทวันนี้:</b> {{ wallet_daily_total }} บาท</div>
+
+<h2>รายการใหม่</h2>
+<table id="new-orders">
+<tr><th>Transaction ID</th><th>ประเภท</th><th>จำนวน</th><th>ชื่อ/เบอร์</th><th>เวลา</th><th>สถานะ</th><th>อนุมัติ</th></tr>
+{% for tx in new_orders %}
+<tr>
+<td>{{ tx.txid }}</td>
+<td>{{ tx.event }}</td>
+<td>{{ "%.2f"|format(tx.amount) }}</td>
+<td>{{ tx.name_phone }}</td>
+<td>{{ ts_to_str(tx.timestamp) }}</td>
+<td class="status-{{ tx.status }}">{{ tx.status }}</td>
+<td><button class="approve-btn" onclick="approveTx('{{ tx.txid }}')">อนุมัติ</button></td>
+</tr>
+{% endfor %}
+</table>
+
+<h2>รายการที่อนุมัติแล้ว</h2>
+<table>
+<tr><th>Transaction ID</th><th>ประเภท</th><th>จำนวน</th><th>ชื่อ/เบอร์</th><th>เวลา</th><th>อนุมัติโดย</th><th>เวลาที่อนุมัติ</th></tr>
+{% for tx in approved_orders %}
+<tr>
+<td>{{ tx.txid }}</td>
+<td>{{ tx.event }}</td>
+<td>{{ "%.2f"|format(tx.amount) }}</td>
+<td>{{ tx.name_phone }}</td>
+<td>{{ ts_to_str(tx.timestamp) }}</td>
+<td>{{ tx.approved_by }}</td>
+<td>{{ tx.approved_time }}</td>
+</tr>
+{% endfor %}
+</table>
+
+<h2>ยอดฝากย้อนหลัง</h2>
+<table>
+<tr><th>วันที่</th><th>ยอดรวมวอเลท</th></tr>
+{% for record in wallet_history %}
+<tr>
+<td>{{ record.date }}</td>
+<td>{{ "%.2f"|format(record.total) }}</td>
+</tr>
+{% endfor %}
+</table>
+
+</body>
+</html>
+"""
+
+if __name__=="__main__":
+    app.run(host="0.0.0.0", port=int(os.environ.get("PORT",5000)))
