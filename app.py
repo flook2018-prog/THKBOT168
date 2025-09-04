@@ -153,14 +153,80 @@ DASHBOARD_HTML = """
 <head>
     <title>THKBot168 Dashboard</title>
     <style>
-        body { font-family: Arial, sans-serif; padding: 20px; background: #f0f2f5; }
-        h1, h2 { text-align: center; }
-        .scroll-box { max-height: 400px; overflow-y: auto; margin-bottom: 20px; background: white; border-radius: 12px; }
-        table { width: 100%; border-collapse: collapse; margin-bottom: 20px; }
-        th, td { padding: 12px; border-bottom: 1px solid #eee; text-align: center; }
-        th { background: #007bff; color: white; position: sticky; top: 0; z-index: 2; }
-        tr:hover { background-color: #f9f9f9; }
-        button { padding: 6px 12px; border: none; border-radius: 6px; cursor: pointer; background: green; color: white; }
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: #f0f2f5;
+            margin: 0; padding: 20px;
+            color: #333;
+        }
+
+        h1, h2 {
+            text-align: center;
+            margin-bottom: 15px;
+        }
+
+        .scroll-box {
+            max-height: 400px;
+            overflow-y: auto;
+            margin-bottom: 25px;
+            background: #fff;
+            border-radius: 12px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.08);
+            padding: 10px;
+            scroll-behavior: smooth;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+
+        th, td {
+            padding: 12px;
+            text-align: center;
+        }
+
+        th {
+            position: sticky;
+            top: 0;
+            z-index: 2;
+            background: linear-gradient(90deg,#4a90e2,#007bff);
+            color: white;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+        }
+
+        tr:hover {
+            background-color: #f1f5f9;
+            transition: background 0.3s;
+        }
+
+        button {
+            padding: 6px 12px;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            background: #28a745;
+            color: white;
+            transition: all 0.3s ease;
+        }
+
+        button:hover {
+            background: #218838;
+            transform: scale(1.05);
+        }
+
+        ::-webkit-scrollbar {
+            width: 8px;
+        }
+
+        ::-webkit-scrollbar-thumb {
+            background-color: rgba(0,0,0,0.2);
+            border-radius: 4px;
+        }
+
+        ::-webkit-scrollbar-track {
+            background: transparent;
+        }
     </style>
 </head>
 <body>
@@ -219,7 +285,6 @@ DASHBOARD_HTML = """
     </div>
 
 <script>
-// ================= Update DateTime =================
 function updateCurrentTime(){
     const now = new Date();
     const y = now.getFullYear();
@@ -234,17 +299,15 @@ function updateCurrentTime(){
 setInterval(updateCurrentTime, 1000);
 updateCurrentTime();
 
-// ================= Update Transactions =================
 async function fetchTransactions(){
     try{
         let resp = await fetch("/get_transactions");
         let data = await resp.json();
 
-        // Update wallet info
         document.getElementById("wallet-info").innerText =
             `💰💰 ยอด Wallet วันนี้: ${data.wallet_daily_total} บาท`;
 
-        // Update new orders table
+        // New orders
         let newTableBody = document.querySelector("#new-orders-table tbody");
         newTableBody.innerHTML = "";
         data.new_orders.forEach(tx => {
@@ -269,7 +332,7 @@ async function fetchTransactions(){
             row.insertCell(6).innerText = tx.message;
         });
 
-        // Update approved orders table
+        // Approved orders
         let approvedTableBody = document.querySelector("#approved-orders-table tbody");
         approvedTableBody.innerHTML = "";
         data.approved_orders.forEach(tx => {
@@ -283,7 +346,7 @@ async function fetchTransactions(){
             row.insertCell(6).innerText = tx.message;
         });
 
-        // Update daily summary table
+        // Daily summary
         let dailyTableBody = document.querySelector("#daily-summary-table tbody");
         dailyTableBody.innerHTML = "";
         data.daily_summary.forEach(day => {
@@ -303,6 +366,7 @@ fetchTransactions();
 </body>
 </html>
 """
+
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
