@@ -1,6 +1,6 @@
 from flask import Flask, request, jsonify, render_template_string
 import os, json, jwt, random
-from datetime import datetime, date
+from datetime import datetime, date, timedelta
 from collections import defaultdict
 
 app = Flask(__name__)
@@ -53,19 +53,23 @@ def index():
 @app.route("/get_transactions")
 def get_transactions():
     today_str = date.today().strftime("%Y-%m-%d")
+    # ลบรายการเก่าที่อนุมัติแล้วก่อนวันปัจจุบัน
     transactions[:] = [tx for tx in transactions if not (tx["status"]=="approved" and tx["time"].strftime("%Y-%m-%d") < today_str)]
 
     new_orders = [tx for tx in transactions if tx["status"] == "new"][-20:][::-1]
     approved_orders = [tx for tx in transactions if tx["status"] == "approved"][-20:][::-1]
 
+    # ยอดรวมวันนี้
     wallet_daily_total = sum(tx["amount"] for tx in transactions if tx["status"]=="approved" and tx["time"].strftime("%Y-%m-%d")==today_str)
 
+    # สรุปยอดรายวัน
     daily_summary.clear()
     for tx in transactions:
         if tx["status"]=="approved":
             day = tx["time"].strftime("%Y-%m-%d")
             daily_summary[day] += tx["amount"]
 
+    # แปลงข้อมูลสำหรับ Dashboard
     for tx in new_orders + approved_orders:
         tx["time_str"] = tx["time"].strftime("%Y-%m-%d %H:%M:%S")
         tx["amount_str"] = f"{tx['amount']:,.2f}"
@@ -121,7 +125,7 @@ def webhook():
         name = f"{sender_name} / {sender_mobile}" if sender_mobile else sender_name
         bank_code = decoded.get("channel","-")
 
-        # ใช้เวลาอิงจาก JSON
+        # เวลาอิงจาก JSON + แปลงเป็นเวลาไทย UTC+7
         time_str = decoded.get("created_at") or decoded.get("time")
         try:
             if time_str:
@@ -131,6 +135,7 @@ def webhook():
                     tx_time = datetime.strptime(time_str,"%Y-%m-%d %H:%M:%S")
             else:
                 tx_time = datetime.now()
+            tx_time = tx_time + timedelta(hours=7)  # แปลงเวลาเป็นไทย
         except:
             tx_time = datetime.now()
 
@@ -161,9 +166,10 @@ DASHBOARD_HTML = """
 <style>
 body{font-family:'Segoe UI',sans-serif;background:#f0f2f5;margin:0;padding:20px;color:#333}
 h1,h2{text-align:center;margin-bottom:15px}
+h2 span{font-weight:bold;font-size:1.3em}
 .scroll-box{max-height:400px;overflow-y:auto;margin-bottom:25px;background:#fff;border-radius:12px;box-shadow:0 4px 12px rgba(0,0,0,0.08);padding:10px;scroll-behavior:smooth}
 table{width:100%;border-collapse:collapse}
-th,td{padding:12px;text-align:center}
+th,td{padding:12px;text-align:center;font-size:1em}
 th{position:sticky;top:0;z-index:2;background:linear-gradient(90deg,#4a90e2,#007bff);color:white;box-shadow:0 2px 5px rgba(0,0,0,0.1)}
 tr:hover{background-color:#f1f5f9;transition:0.3s}
 button{padding:6px 12px;border:none;border-radius:6px;cursor:pointer;background:#28a745;color:white;transition:0.3s}
