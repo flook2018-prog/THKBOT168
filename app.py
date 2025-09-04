@@ -1,60 +1,58 @@
-from flask import Flask, request, render_template
+from flask import Flask, request, jsonify
 import os
-import jwt
-from datetime import datetime
 
 app = Flask(__name__)
 
-# อ่าน SECRET_KEY จาก Service Variable ใน Railway
-SECRET_KEY = os.environ.get("TRUEWALLET_SECRET")
-
+# ดึง SECRET_KEY จาก Environment ของ Railway
+SECRET_KEY = os.environ.get("SECRET_KEY")
 if not SECRET_KEY:
-    print("ERROR: TRUEWALLET_SECRET not set!")
+    raise ValueError("SECRET_KEY ไม่ได้ตั้งค่าใน Environment")
 
-# เก็บรายการเงินเข้า
+# ตัวอย่างเก็บรายการ
 transactions = []
 
-# Webhook POST จาก TrueWallet
-@app.route("/truewallet/webhook", methods=["POST"])
-def webhook():
-    if not request.is_json:
-        return {"status": "error", "message": "Expected JSON"}, 400
+def translate_event_type(event_type):
+    # แปลงประเภท Event ของ TrueWallet เป็นข้อความไทย
+    mapping = {
+        "P2P": "วอลเล็ตโอนเงิน",
+        "TOPUP": "เติมเงิน",
+        "PAYMENT": "จ่ายเงิน"
+    }
+    return mapping.get(event_type, event_type)
 
-    data = request.get_json()
-    message = data.get("message")
-    if not message:
-        return {"status": "error", "message": "Missing 'message'"}, 400
-
-    if not SECRET_KEY:
-        return {"status": "error", "message": "Server missing SECRET_KEY"}, 500
-
-    try:
-        # Decode JWT
-        payload = jwt.decode(message, SECRET_KEY, algorithms=["HS256"])
-
-        # แปลง received_time ให้สวย
-        if "received_time" in payload:
-            try:
-                payload["received_time"] = datetime.strptime(
-                    payload["received_time"][:19], "%Y-%m-%dT%H:%M:%S"
-                ).strftime("%d/%m/%Y %H:%M:%S")
-            except Exception:
-                payload["received_time"] = payload.get("received_time", "-")
-
-        # ใส่รายการใหม่ด้านบน
-        transactions.insert(0, payload)
-
-        print("New transaction:", payload)
-        return {"status": "ok"}, 200
-    except Exception as e:
-        print("JWT decode error:", e)
-        return {"status": "error", "message": str(e)}, 400
-
-# หน้าเว็บ Dashboard
+# หน้าเว็บหลัก
 @app.route("/")
 def index():
-    return render_template("index.html", transactions=transactions)
+    html = """
+    <h1>THKBot168 Dashboard</h1>
+    <p>รายการล่าสุด:</p>
+    <ul>
+        {% for tx in transactions %}
+            <li>{{ tx }}</li>
+        {% endfor %}
+    </ul>
+    """
+    return app.jinja_env.from_string(html).render(transactions=transactions)
+
+# Webhook สำหรับ TrueWallet
+@app.route("/truewallet/webhook", methods=["POST"])
+def webhook():
+    try:
+        data = request.json
+        if not data:
+            return jsonify({"status": "error", "message": "ไม่มีข้อมูล JSON"}), 400
+
+        # แปลงประเภท Event
+        event_type = translate_event_type(data.get("event", "Unknown"))
+        amount = data.get("amount", 0)
+
+        # เก็บรายการไว้ใน memory (คุณสามารถเก็บใน DB ได้)
+        transactions.append(f"{event_type}: {amount} บาท")
+
+        return jsonify({"status": "success"}), 200
+
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
 
 if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 5000))
-    app.run(host="0.0.0.0", port=port)
+    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
