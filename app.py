@@ -14,7 +14,6 @@ DATA_FILE = "transactions_data.json"
 LOG_FILE = "transactions.log"
 SECRET_KEY = "8d2909e5a59bc24bbf14059e9e591402"
 
-# Mapping ธนาคาร -> ชื่อภาษาไทย
 BANK_MAP_TH = {
     "BBL": "กรุงเทพ",
     "KBANK": "กสิกรไทย",
@@ -25,7 +24,7 @@ BANK_MAP_TH = {
     "TRUEWALLET": "True Wallet",
 }
 
-# โหลดข้อมูลธุรกรรมเก่า
+# โหลดข้อมูลเก่า
 if os.path.exists(DATA_FILE):
     with open(DATA_FILE, "r", encoding="utf-8") as f:
         try:
@@ -214,7 +213,7 @@ def webhook():
         log_with_time("[WEBHOOK ERROR]", str(e))
         return jsonify({"status": "error", "message": str(e)}), 500
 
-# ฟังก์ชันรีเซทรายการอนุมัติทุกวัน 00:00
+# Auto reset approved daily
 def daily_reset_thread():
     while True:
         now = datetime.now()
