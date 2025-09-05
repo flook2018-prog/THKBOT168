@@ -14,7 +14,6 @@ DATA_FILE = "transactions_data.json"
 LOG_FILE = "transactions.log"
 SECRET_KEY = "8d2909e5a59bc24bbf14059e9e591402"
 
-# Mapping ธนาคาร -> ชื่อภาษาไทย
 BANK_MAP_TH = {
     "BBL": "กรุงเทพ",
     "KBANK": "กสิกรไทย",
@@ -25,19 +24,30 @@ BANK_MAP_TH = {
     "TRUEWALLET": "True Wallet",
 }
 
-# โหลดข้อมูลธุรกรรมเก่า
 if os.path.exists(DATA_FILE):
     with open(DATA_FILE, "r", encoding="utf-8") as f:
         try:
             transactions = json.load(f)
             for tx in transactions:
                 tx["time"] = datetime.strptime(tx["time"], "%Y-%m-%d %H:%M:%S")
+                if "approved_time" in tx:
+                    tx["approved_time"] = datetime.strptime(tx["approved_time"], "%Y-%m-%d %H:%M:%S")
+                if "cancelled_time" in tx:
+                    tx["cancelled_time"] = datetime.strptime(tx["cancelled_time"], "%Y-%m-%d %H:%M:%S")
         except Exception:
             transactions = []
 
 def save_transactions():
+    def serialize_tx(tx):
+        d = dict(tx)
+        d["time"] = tx["time"].strftime("%Y-%m-%d %H:%M:%S")
+        if "approved_time" in tx:
+            d["approved_time"] = tx["approved_time"].strftime("%Y-%m-%d %H:%M:%S")
+        if "cancelled_time" in tx:
+            d["cancelled_time"] = tx["cancelled_time"].strftime("%Y-%m-%d %H:%M:%S")
+        return d
     with open(DATA_FILE, "w", encoding="utf-8") as f:
-        json.dump([{**tx, "time": tx["time"].strftime("%Y-%m-%d %H:%M:%S")} for tx in transactions], f, ensure_ascii=False, indent=2)
+        json.dump([serialize_tx(tx) for tx in transactions], f, ensure_ascii=False, indent=2)
 
 def log_with_time(*args):
     ts = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
@@ -49,10 +59,6 @@ def log_with_time(*args):
 def random_english_name():
     first_names = ["Alice","Bob","Charlie","David","Eve","Frank","Grace","Hannah","Ian","Jack","Kathy","Leo","Mia","Nina","Oscar"]
     return random.choice(first_names)
-
-# แปลงเวลาเป็นไทย
-def to_thai_time(dt):
-    return (dt + timedelta(hours=7)).strftime("%Y-%m-%d %H:%M:%S")
 
 @app.route("/")
 def index():
@@ -70,34 +76,17 @@ def get_transactions():
 
     wallet_daily_total = sum(tx["amount"] for tx in approved_orders)
 
-    # New Orders
-    for tx in new_orders:
-        tx["time_str"] = to_thai_time(tx["time"])
+    for tx in new_orders + approved_orders + cancelled_orders:
+        tx["time_str"] = (tx["time"] + timedelta(hours=7)).strftime("%Y-%m-%d %H:%M:%S")
         tx["amount_str"] = f"{tx['amount']:,.2f}"
         if "name" not in tx: tx["name"] = "-"
         if "bank" in tx: tx["bank"] = BANK_MAP_TH.get(tx["bank"], tx["bank"])
         else: tx["bank"] = "-"
         if "customer_user" not in tx: tx["customer_user"] = "-"
-
-    # Approved Orders
-    for tx in approved_orders:
-        tx["time_str"] = to_thai_time(tx["time"])
-        tx["approved_time"] = to_thai_time(datetime.strptime(tx["approved_time"], "%Y-%m-%d %H:%M:%S"))
-        tx["amount_str"] = f"{tx['amount']:,.2f}"
-        if "name" not in tx: tx["name"] = "-"
-        if "bank" in tx: tx["bank"] = BANK_MAP_TH.get(tx["bank"], tx["bank"])
-        else: tx["bank"] = "-"
-        if "customer_user" not in tx: tx["customer_user"] = "-"
-
-    # Cancelled Orders
-    for tx in cancelled_orders:
-        tx["time_str"] = to_thai_time(tx["time"])
-        tx["cancelled_time"] = to_thai_time(datetime.strptime(tx["cancelled_time"], "%Y-%m-%d %H:%M:%S"))
-        tx["amount_str"] = f"{tx['amount']:,.2f}"
-        if "name" not in tx: tx["name"] = "-"
-        if "bank" in tx: tx["bank"] = BANK_MAP_TH.get(tx["bank"], tx["bank"])
-        else: tx["bank"] = "-"
-        if "customer_user" not in tx: tx["customer_user"] = "-"
+        if "approved_time" in tx and isinstance(tx["approved_time"], datetime):
+            tx["approved_time"] = (tx["approved_time"] + timedelta(hours=7)).strftime("%Y-%m-%d %H:%M:%S")
+        if "cancelled_time" in tx and isinstance(tx["cancelled_time"], datetime):
+            tx["cancelled_time"] = (tx["cancelled_time"] + timedelta(hours=7)).strftime("%Y-%m-%d %H:%M:%S")
 
     daily_list = [{"date": d, "total": f"{v:,.2f}"} for d, v in sorted(daily_summary_history.items())]
 
@@ -123,7 +112,7 @@ def approve():
         if tx["id"] == txid:
             tx["status"] = "approved"
             tx["approver_name"] = approver_name
-            tx["approved_time"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            tx["approved_time"] = datetime.now()  # เก็บเวลาจริงตอนอนุมัติ
             tx["customer_user"] = customer_user
             day = tx["time"].strftime("%Y-%m-%d")
             daily_summary_history[day] += tx["amount"]
@@ -143,7 +132,7 @@ def cancel():
     for tx in transactions:
         if tx["id"] == txid and tx["status"] == "new":
             tx["status"] = "cancelled"
-            tx["cancelled_time"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            tx["cancelled_time"] = datetime.now()  # เก็บเวลาจริงตอนยกเลิก
             tx["canceler_name"] = canceler_name
             log_with_time(f"[CANCELLED] {txid} by {canceler_name} ({user_ip})")
             break
@@ -191,7 +180,6 @@ def reset_cancelled():
     save_transactions()
     return jsonify({"status": "success"}), 200
 
-# TrueWallet webhook
 @app.route("/truewallet/webhook", methods=["POST"])
 def webhook():
     try:
@@ -205,9 +193,7 @@ def webhook():
         sender_mobile = decoded.get("sender_mobile", "-")
         name = f"{sender_name} / {sender_mobile}" if sender_mobile else sender_name
         bank_code = decoded.get("channel", "-")
-        bank_name_th = BANK_MAP_TH.get(bank_code.upper(), bank_code)  # แก้ TrueWallet ให้ขึ้นชื่อ
-        if bank_name_th == "TRUEWALLET":
-            bank_name_th = "True Wallet"
+        bank_name_th = BANK_MAP_TH.get(bank_code, bank_code)
 
         time_str = decoded.get("created_at") or decoded.get("time")
         try:
@@ -215,8 +201,9 @@ def webhook():
                 tx_time = datetime.strptime(time_str, "%Y-%m-%dT%H:%M:%S")
             else:
                 tx_time = datetime.strptime(time_str, "%Y-%m-%d %H:%M:%S")
+            tx_time = tx_time + timedelta(hours=7)
         except:
-            tx_time = datetime.now()
+            tx_time = datetime.now() + timedelta(hours=7)
 
         tx = {
             "id": txid,
@@ -234,19 +221,6 @@ def webhook():
     except Exception as e:
         log_with_time("[WEBHOOK ERROR]", str(e))
         return jsonify({"status": "error", "message": str(e)}), 500
-
-# Auto reset approved at 00:00 Thai
-def daily_reset_thread():
-    while True:
-        now = datetime.now() + timedelta(hours=7)  # เวลาไทย
-        next_reset = datetime.combine(now.date() + timedelta(days=1), datetime.min.time())
-        sleep_seconds = (next_reset - now).total_seconds()
-        time.sleep(sleep_seconds)
-        with app.app_context():
-            reset_approved()
-            log_with_time("[AUTO RESET APPROVED at 00:00 Thai]")
-
-threading.Thread(target=daily_reset_thread, daemon=True).start()
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
