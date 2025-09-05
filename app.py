@@ -77,7 +77,6 @@ def get_transactions():
     wallet_daily_total_str = f"{wallet_daily_total:,.2f}"
 
     for tx in new_orders + approved_orders + cancelled_orders:
-        # เวลาไทยตรงตาม server
         tx["time_str"] = tx["time"].strftime("%Y-%m-%d %H:%M:%S")
         tx["amount_str"] = f"{tx['amount']:,.2f}"
         tx["name"] = tx.get("name","-")
@@ -189,13 +188,14 @@ def webhook():
         bank_code = decoded.get("channel", "-")
         bank_name_th = BANK_MAP_TH.get(bank_code, bank_code)
 
-        # เวลาไทยตรงตาม server (ไม่ต้อง +7)
+        # แปลงเวลาและลบ 7 ชั่วโมง
         time_str = decoded.get("created_at") or decoded.get("time")
         try:
             if "T" in time_str:
                 tx_time = datetime.strptime(time_str, "%Y-%m-%dT%H:%M:%S")
             else:
                 tx_time = datetime.strptime(time_str, "%Y-%m-%d %H:%M:%S")
+            tx_time = tx_time - timedelta(hours=7)
         except:
             tx_time = datetime.now()
 
