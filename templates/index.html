@@ -1,128 +1,139 @@
 <!DOCTYPE html>
 <html>
 <head>
-    <title>THKBot168 Dashboard</title>
-    <style>
-        body{font-family:'Segoe UI',sans-serif;background:#f0f2f5;margin:0;padding:20px;color:#333}
-        h1,h2{text-align:center;margin-bottom:15px}
-        .top-right{position:absolute;top:10px;right:20px;font-weight:bold;color:#555}
-        .scroll-box{max-height:400px;overflow-y:auto;margin-bottom:25px;background:#fff;border-radius:12px;box-shadow:0 4px 12px rgba(0,0,0,0.08);padding:10px}
-        table{width:100%;border-collapse:collapse}
-        th,td{padding:12px;text-align:center;font-size:1em}
-        th{position:sticky;top:0;z-index:2;background:#007bff;color:white}
-        tr:hover{background-color:#f1f5f9}
-        button{padding:6px 12px;border:none;border-radius:6px;cursor:pointer;color:white}
-        .approve-btn{background:#28a745}
-        .approve-btn:hover{background:#218838}
-        .cancel-btn{background:#dc3545}
-        .cancel-btn:hover{background:#c82333}
-    </style>
+<title>THKBot168 Dashboard</title>
+<style>
+body{font-family:'Segoe UI',sans-serif;background:#f0f2f5;margin:0;padding:20px;color:#333}
+h1,h2{text-align:center;margin-bottom:15px}
+h2 span{font-weight:bold;font-size:1.3em}
+.scroll-box{max-height:400px;overflow-y:auto;margin-bottom:25px;background:#fff;border-radius:12px;box-shadow:0 4px 12px rgba(0,0,0,0.08);padding:10px;scroll-behavior:smooth}
+table{width:100%;border-collapse:collapse}
+th,td{padding:12px;text-align:center;font-size:1em}
+th{position:sticky;top:0;z-index:2;background:linear-gradient(90deg,#4a90e2,#007bff);color:white;box-shadow:0 2px 5px rgba(0,0,0,0.1)}
+tr:hover{background-color:#f1f5f9;transition:0.3s}
+button{padding:6px 12px;border:none;border-radius:6px;cursor:pointer;background:#28a745;color:white;transition:0.3s;margin:2px}
+button:hover{background:#218838;transform:scale(1.05)}
+::-webkit-scrollbar{width:8px}
+::-webkit-scrollbar-thumb{background-color:rgba(0,0,0,0.2);border-radius:4px}
+::-webkit-scrollbar-track{background:transparent}
+#ip-display{position:absolute;top:10px;right:20px;font-weight:bold;color:#555}
+</style>
 </head>
 <body>
-<div class="top-right">IP: {{ user_ip }}</div>
-<h1>THKBot168 Dashboard</h1>
-<h2>📅 <span id="current-datetime"></span></h2>
+<h1>THKBot168 Dashboard (Realtime)</h1>
+<div id="ip-display">IP: {{ user_ip }}</div>
+<h2>วันที่-เวลา: <span id="current-datetime"></span></h2>
 <h2>💰 ยอด Wallet วันนี้: <span id="wallet-info">0</span> บาท</h2>
 
-<h2>รายการใหม่</h2>
+<h2>รายการใหม่ (New Orders)</h2>
 <div class="scroll-box">
 <table id="new-orders-table">
-<thead>
-<tr><th>ID</th><th>ประเภท</th><th>จำนวน</th><th>ชื่อ/เบอร์</th><th>เวลา</th><th>ธนาคาร</th><th>การจัดการ</th></tr>
-</thead><tbody></tbody>
+<thead><tr>
+<th>Transaction ID</th><th>ประเภท</th><th>จำนวน</th>
+<th>ชื่อ/เบอร์</th><th>เวลา</th><th>ธนาคาร</th><th>จัดการ</th>
+</tr></thead>
+<tbody></tbody>
 </table>
 </div>
 
-<h2>รายการที่อนุมัติแล้ว</h2>
+<h2>รายการที่อนุมัติแล้ว (Approved Orders)</h2>
 <div class="scroll-box">
 <table id="approved-orders-table">
-<thead>
-<tr><th>ID</th><th>ประเภท</th><th>จำนวน</th><th>ชื่อ/เบอร์</th><th>เวลา</th><th>ธนาคาร</th><th>ผู้อนุมัติ</th><th>เวลาอนุมัติ</th></tr>
-</thead><tbody></tbody>
+<thead><tr>
+<th>Transaction ID</th><th>ประเภท</th><th>จำนวน</th>
+<th>ชื่อ/เบอร์</th><th>เวลา</th><th>ธนาคาร</th>
+<th>ผู้อนุมัติ</th><th>เวลาอนุมัติ</th><th>ยูสเซอร์ลูกค้า</th><th>คืนเป็น New</th>
+</tr></thead>
+<tbody></tbody>
 </table>
 </div>
 
-<h2>รายการที่ยกเลิก</h2>
+<h2>รายการยกเลิก (Cancelled Orders)</h2>
 <div class="scroll-box">
 <table id="cancelled-orders-table">
-<thead>
-<tr><th>ID</th><th>ประเภท</th><th>จำนวน</th><th>ชื่อ/เบอร์</th><th>เวลา</th><th>ธนาคาร</th><th>เวลา Cancel</th></tr>
-</thead><tbody></tbody>
-</table>
-</div>
-
-<h2>ยอด Wallet รายวัน</h2>
-<div class="scroll-box">
-<table id="daily-summary-table">
-<thead><tr><th>วันที่</th><th>ยอดรวม (บาท)</th></tr></thead><tbody></tbody>
+<thead><tr>
+<th>Transaction ID</th><th>ประเภท</th><th>จำนวน</th>
+<th>ชื่อ/เบอร์</th><th>เวลา</th><th>ธนาคาร</th>
+<th>เวลา Cancel</th><th>คืนเป็น New</th>
+</tr></thead>
+<tbody></tbody>
 </table>
 </div>
 
 <script>
-function updateCurrentTime(){
-    document.getElementById("current-datetime").innerText=new Date().toLocaleString('en-GB',{hour12:false})
-}
+function updateCurrentTime(){document.getElementById("current-datetime").innerText=new Date().toLocaleString('en-GB',{hour12:false})}
 setInterval(updateCurrentTime,1000);updateCurrentTime();
 
 async function fetchTransactions(){
-    try{
-        let resp=await fetch("/get_transactions");let data=await resp.json();
-        document.getElementById("wallet-info").innerText=data.wallet_daily_total;
+    let resp=await fetch("/get_transactions"); let data=await resp.json();
 
-        let newTable=document.querySelector("#new-orders-table tbody");newTable.innerHTML="";
-        data.new_orders.forEach(tx=>{
-            let row=newTable.insertRow();
-            row.insertCell(0).innerText=tx.id;
-            row.insertCell(1).innerText=tx.event;
-            row.insertCell(2).innerText=tx.amount_str;
-            row.insertCell(3).innerText=tx.name;
-            row.insertCell(4).innerText=tx.time_str;
-            row.insertCell(5).innerText=tx.bank;
-            let btnCell=row.insertCell(6);
-            let approve=document.createElement("button");
-            approve.innerText="อนุมัติ";
-            approve.className="approve-btn";
-            approve.onclick=async ()=>{await fetch("/approve",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({id:tx.id})});fetchTransactions()};
-            let cancel=document.createElement("button");
-            cancel.innerText="ยกเลิก";
-            cancel.className="cancel-btn";
-            cancel.onclick=async ()=>{await fetch("/cancel",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({id:tx.id})});fetchTransactions()};
-            btnCell.appendChild(approve);
-            btnCell.appendChild(cancel);
-        });
+    // New Orders
+    let newBody=document.querySelector("#new-orders-table tbody"); newBody.innerHTML="";
+    data.new_orders.forEach(tx=>{
+        let row=newBody.insertRow();
+        row.insertCell(0).innerText=tx.id;
+        row.insertCell(1).innerText=tx.event;
+        row.insertCell(2).innerText=tx.amount_str;
+        row.insertCell(3).innerText=tx.name;
+        row.insertCell(4).innerText=tx.time_str;
+        row.insertCell(5).innerText=tx.bank;
+        let cell=row.insertCell(6);
+        let btnApprove=document.createElement("button");
+        btnApprove.innerText="อนุมัติ";
+        btnApprove.onclick=async ()=>{
+            let customer_user=prompt("กรุณาใส่ยูสเซอร์ลูกค้า เช่น thk101982");
+            if(!customer_user) return alert("ต้องใส่ยูสเซอร์ลูกค้าก่อนอนุมัติ");
+            await fetch("/approve",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({id:tx.id,customer_user:customer_user})});
+            fetchTransactions();
+        };
+        let btnCancel=document.createElement("button");
+        btnCancel.innerText="ยกเลิก";
+        btnCancel.onclick=async ()=>{
+            await fetch("/cancel",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({id:tx.id})});
+            fetchTransactions();
+        };
+        cell.appendChild(btnApprove); cell.appendChild(btnCancel);
+    });
 
-        let approvedTable=document.querySelector("#approved-orders-table tbody");approvedTable.innerHTML="";
-        data.approved_orders.forEach(tx=>{
-            let row=approvedTable.insertRow();
-            row.insertCell(0).innerText=tx.id;
-            row.insertCell(1).innerText=tx.event;
-            row.insertCell(2).innerText=tx.amount_str;
-            row.insertCell(3).innerText=tx.name;
-            row.insertCell(4).innerText=tx.time_str;
-            row.insertCell(5).innerText=tx.bank;
-            row.insertCell(6).innerText=tx.approver_name;
-            row.insertCell(7).innerText=tx.approved_time || "-";
-        });
+    // Approved Orders
+    let approvedBody=document.querySelector("#approved-orders-table tbody"); approvedBody.innerHTML="";
+    data.approved_orders.forEach(tx=>{
+        let row=approvedBody.insertRow();
+        row.insertCell(0).innerText=tx.id;
+        row.insertCell(1).innerText=tx.event;
+        row.insertCell(2).innerText=tx.amount_str;
+        row.insertCell(3).innerText=tx.name;
+        row.insertCell(4).innerText=tx.time_str;
+        row.insertCell(5).innerText=tx.bank;
+        row.insertCell(6).innerText=tx.approver_name;
+        row.insertCell(7).innerText=tx.approved_time;
+        row.insertCell(8).innerText=tx.customer_user||"-";
+        let restoreBtn=document.createElement("button"); restoreBtn.innerText="คืนเป็น New";
+        restoreBtn.onclick=async ()=>{
+            await fetch("/restore",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({id:tx.id})});
+            fetchTransactions();
+        };
+        row.insertCell(9).appendChild(restoreBtn);
+    });
 
-        let cancelTable=document.querySelector("#cancelled-orders-table tbody");cancelTable.innerHTML="";
-        data.cancelled_orders.forEach(tx=>{
-            let row=cancelTable.insertRow();
-            row.insertCell(0).innerText=tx.id;
-            row.insertCell(1).innerText=tx.event;
-            row.insertCell(2).innerText=tx.amount_str;
-            row.insertCell(3).innerText=tx.name;
-            row.insertCell(4).innerText=tx.time_str;
-            row.insertCell(5).innerText=tx.bank;
-            row.insertCell(6).innerText=tx.cancelled_time || "-";
-        });
-
-        let dailyTable=document.querySelector("#daily-summary-table tbody");dailyTable.innerHTML="";
-        data.daily_summary.forEach(day=>{
-            let row=dailyTable.insertRow();
-            row.insertCell(0).innerText=day.date;
-            row.insertCell(1).innerText=day.total;
-        });
-    }catch(e){console.error("fetch error:",e)}
+    // Cancelled Orders
+    let cancelledBody=document.querySelector("#cancelled-orders-table tbody"); cancelledBody.innerHTML="";
+    data.cancelled_orders.forEach(tx=>{
+        let row=cancelledBody.insertRow();
+        row.insertCell(0).innerText=tx.id;
+        row.insertCell(1).innerText=tx.event;
+        row.insertCell(2).innerText=tx.amount_str;
+        row.insertCell(3).innerText=tx.name;
+        row.insertCell(4).innerText=tx.time_str;
+        row.insertCell(5).innerText=tx.bank;
+        row.insertCell(6).innerText=tx.cancelled_time;
+        let restoreBtn=document.createElement("button"); restoreBtn.innerText="คืนเป็น New";
+        restoreBtn.onclick=async ()=>{
+            await fetch("/restore",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({id:tx.id})});
+            fetchTransactions();
+        };
+        row.insertCell(7).appendChild(restoreBtn);
+    });
 }
 setInterval(fetchTransactions,3000);
 fetchTransactions();
