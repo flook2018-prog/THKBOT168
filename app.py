@@ -81,7 +81,8 @@ def approve():
         if tx["id"] == txid:
             tx["status"] = "approved"
             tx["approver_name"] = approver_name
-            tx["approved_time"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            # เวลาอนุมัติตรงกับเวลาลูกค้า + UTC+7
+            tx["approved_time"] = tx["time"].strftime("%Y-%m-%d %H:%M:%S")
             day = tx["time"].strftime("%Y-%m-%d")
             daily_summary_history[day] += tx["amount"]
             log_with_time(f"[APPROVED] {txid} by {approver_name} ({user_ip})")
@@ -95,8 +96,26 @@ def cancel():
     for tx in transactions:
         if tx["id"] == txid and tx["status"] == "new":
             tx["status"] = "cancelled"
-            tx["cancelled_time"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            # เวลา Cancel ตรงกับเวลาลูกค้า + UTC+7
+            tx["cancelled_time"] = tx["time"].strftime("%Y-%m-%d %H:%M:%S")
             log_with_time(f"[CANCELLED] {txid}")
+            break
+    save_transactions()
+    return jsonify({"status": "success"}), 200
+
+@app.route("/restore", methods=["POST"])
+def restore():
+    txid = request.json.get("id")
+    for tx in transactions:
+        if tx["id"] == txid and tx["status"] in ["approved","cancelled"]:
+            if tx["status"] == "approved":
+                day = tx["time"].strftime("%Y-%m-%d")
+                daily_summary_history[day] -= tx["amount"]
+            tx["status"] = "new"
+            tx.pop("approver_name", None)
+            tx.pop("approved_time", None)
+            tx.pop("cancelled_time", None)
+            log_with_time(f"[RESTORED] {txid} -> new")
             break
     save_transactions()
     return jsonify({"status": "success"}), 200
