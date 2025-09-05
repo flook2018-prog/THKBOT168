@@ -219,18 +219,5 @@ def webhook():
         log_with_time("[WEBHOOK ERROR]", str(e))
         return jsonify({"status": "error", "message": str(e)}), 500
 
-# ฟังก์ชันรีเซทรายการอนุมัติทุกวัน 00:00 (เวลาไทย)
-def daily_reset_thread():
-    while True:
-        now = datetime.utcnow() + timedelta(hours=7)
-        next_reset = datetime.combine(now.date() + timedelta(days=1), datetime.min.time())
-        sleep_seconds = (next_reset - now).total_seconds()
-        time.sleep(sleep_seconds)
-        with app.app_context():
-            reset_approved()
-            log_with_time("[AUTO RESET APPROVED at 00:00 THAI]")
-
-threading.Thread(target=daily_reset_thread, daemon=True).start()
-
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
