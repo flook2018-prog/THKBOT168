@@ -1,8 +1,7 @@
 from flask import Flask, request, jsonify, render_template
 import os, json, jwt, random
-from datetime import datetime, date, timedelta
+from datetime import datetime, timedelta
 from collections import defaultdict
-import threading, time
 
 app = Flask(__name__)
 
@@ -14,7 +13,6 @@ DATA_FILE = "transactions_data.json"
 LOG_FILE = "transactions.log"
 SECRET_KEY = "8d2909e5a59bc24bbf14059e9e591402"
 
-# Mapping ธนาคาร -> ชื่อภาษาไทย
 BANK_MAP_TH = {
     "BBL": "กรุงเทพ",
     "KBANK": "กสิกรไทย",
@@ -59,8 +57,8 @@ def log_with_time(*args):
         f.write(msg + "\n")
 
 def random_english_name():
-    first_names = ["Alice","Bob","Charlie","David","Eve","Frank","Grace","Hannah","Ian","Jack","Kathy","Leo","Mia","Nina","Oscar"]
-    return random.choice(first_names)
+    names = ["Alice","Bob","Charlie","David","Eve","Frank","Grace","Hannah","Ian","Jack","Kathy","Leo","Mia","Nina","Oscar"]
+    return random.choice(names)
 
 @app.route("/")
 def index():
@@ -70,15 +68,12 @@ def index():
 # 🔹 GET transactions (แก้ไขไม่กรองวัน)
 @app.route("/get_transactions")
 def get_transactions():
-    # จัดกลุ่มรายการตาม status
     new_orders = [tx for tx in transactions if tx["status"] == "new"][-20:][::-1]
     approved_orders = [tx for tx in transactions if tx["status"] == "approved"][-20:][::-1]
     cancelled_orders = [tx for tx in transactions if tx["status"] == "cancelled"][-20:][::-1]
 
-    # รวมยอด approved
     wallet_daily_total = sum(tx["amount"] for tx in approved_orders)
 
-    # แก้ไขข้อมูลสำหรับแสดงบนหน้าเว็บ
     for tx_list in [new_orders, approved_orders, cancelled_orders]:
         for tx in tx_list:
             tx["time_str"] = tx["time"].strftime("%Y-%m-%d %H:%M:%S")
@@ -95,7 +90,8 @@ def get_transactions():
         "new_orders": new_orders,
         "approved_orders": approved_orders,
         "cancelled_orders": cancelled_orders,
-        "wallet_daily_total": f"{wallet_daily_total:,.2f}"
+        "wallet_daily_total": f"{wallet_daily_total:,.2f}",
+        "daily_summary": [{"date": d, "total": f"{v:,.2f}"} for d, v in sorted(daily_summary_history.items())]
     })
 
 @app.route("/approve", methods=["POST"])
