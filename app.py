@@ -2,6 +2,7 @@ from flask import Flask, request, jsonify, render_template
 import os, json, jwt, random
 from datetime import datetime, date, timedelta
 from collections import defaultdict
+import threading, time
 
 app = Flask(__name__)
 
@@ -13,6 +14,7 @@ DATA_FILE = "transactions_data.json"
 LOG_FILE = "transactions.log"
 SECRET_KEY = "8d2909e5a59bc24bbf14059e9e591402"
 
+# Mapping ธนาคาร -> ชื่อภาษาไทย
 BANK_MAP_TH = {
     "BBL": "กรุงเทพ",
     "KBANK": "กสิกรไทย",
@@ -23,7 +25,7 @@ BANK_MAP_TH = {
     "TRUEWALLET": "True Wallet",
 }
 
-# โหลดข้อมูลเก่า
+# โหลดข้อมูลธุรกรรมเก่า
 if os.path.exists(DATA_FILE):
     with open(DATA_FILE, "r", encoding="utf-8") as f:
         try:
@@ -38,16 +40,16 @@ if os.path.exists(DATA_FILE):
             transactions = []
 
 def save_transactions():
-    def serialize_tx(tx):
-        d = dict(tx)
-        d["time"] = tx["time"].strftime("%Y-%m-%d %H:%M:%S")
-        if "approved_time" in tx:
-            d["approved_time"] = tx["approved_time"].strftime("%Y-%m-%d %H:%M:%S")
-        if "cancelled_time" in tx:
-            d["cancelled_time"] = tx["cancelled_time"].strftime("%Y-%m-%d %H:%M:%S")
-        return d
     with open(DATA_FILE, "w", encoding="utf-8") as f:
-        json.dump([serialize_tx(tx) for tx in transactions], f, ensure_ascii=False, indent=2)
+        json.dump([
+            {
+                **tx,
+                "time": tx["time"].strftime("%Y-%m-%d %H:%M:%S"),
+                **({"approved_time": tx["approved_time"].strftime("%Y-%m-%d %H:%M:%S")} if "approved_time" in tx else {}),
+                **({"cancelled_time": tx["cancelled_time"].strftime("%Y-%m-%d %H:%M:%S")} if "cancelled_time" in tx else {})
+            }
+            for tx in transactions
+        ], f, ensure_ascii=False, indent=2)
 
 def log_with_time(*args):
     ts = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
@@ -77,14 +79,12 @@ def get_transactions():
     wallet_daily_total = sum(tx["amount"] for tx in approved_orders)
 
     for tx in new_orders + approved_orders + cancelled_orders:
-        # New Orders ใช้เวลาไทยจาก webhook
         tx["time_str"] = tx["time"].strftime("%Y-%m-%d %H:%M:%S")
         tx["amount_str"] = f"{tx['amount']:,.2f}"
         if "name" not in tx: tx["name"] = "-"
         if "bank" in tx: tx["bank"] = BANK_MAP_TH.get(tx["bank"], tx["bank"])
         else: tx["bank"] = "-"
         if "customer_user" not in tx: tx["customer_user"] = "-"
-        # Approved / Cancel คงที่
         if "approved_time" in tx and isinstance(tx["approved_time"], datetime):
             tx["approved_time"] = tx["approved_time"].strftime("%Y-%m-%d %H:%M:%S")
         if "cancelled_time" in tx and isinstance(tx["cancelled_time"], datetime):
@@ -114,7 +114,7 @@ def approve():
         if tx["id"] == txid:
             tx["status"] = "approved"
             tx["approver_name"] = approver_name
-            tx["approved_time"] = datetime.now() + timedelta(hours=7)  # เวลาไทยตอนอนุมัติ
+            tx["approved_time"] = datetime.now() + timedelta(hours=7)
             tx["customer_user"] = customer_user
             day = tx["time"].strftime("%Y-%m-%d")
             daily_summary_history[day] += tx["amount"]
@@ -134,7 +134,7 @@ def cancel():
     for tx in transactions:
         if tx["id"] == txid and tx["status"] == "new":
             tx["status"] = "cancelled"
-            tx["cancelled_time"] = datetime.now() + timedelta(hours=7)  # เวลาไทยตอนยกเลิก
+            tx["cancelled_time"] = datetime.now() + timedelta(hours=7)
             tx["canceler_name"] = canceler_name
             log_with_time(f"[CANCELLED] {txid} by {canceler_name} ({user_ip})")
             break
@@ -160,17 +160,12 @@ def restore():
     save_transactions()
     return jsonify({"status": "success"}), 200
 
+# ✅ Reset Approved = ลบออกทั้งหมด
 @app.route("/reset_approved", methods=["POST"])
 def reset_approved():
-    for tx in transactions:
-        if tx["status"] == "approved":
-            day = tx["time"].strftime("%Y-%m-%d")
-            daily_summary_history[day] -= tx["amount"]
-            tx["status"] = "new"
-            tx.pop("approver_name", None)
-            tx.pop("approved_time", None)
-            tx.pop("customer_user", None)
-            log_with_time(f"[RESET APPROVED] {tx['id']}")
+    global transactions
+    transactions = [tx for tx in transactions if tx.get("status") != "approved"]
+    log_with_time("[RESET APPROVED] All approved orders removed")
     save_transactions()
     return jsonify({"status": "success"}), 200
 
@@ -203,7 +198,7 @@ def webhook():
                 tx_time = datetime.strptime(time_str, "%Y-%m-%dT%H:%M:%S")
             else:
                 tx_time = datetime.strptime(time_str, "%Y-%m-%d %H:%M:%S")
-            tx_time = tx_time + timedelta(hours=7)  # เวลาไทย
+            tx_time = tx_time + timedelta(hours=7)
         except:
             tx_time = datetime.now() + timedelta(hours=7)
 
@@ -223,6 +218,19 @@ def webhook():
     except Exception as e:
         log_with_time("[WEBHOOK ERROR]", str(e))
         return jsonify({"status": "error", "message": str(e)}), 500
+
+# ฟังก์ชันรีเซทรายการอนุมัติทุกวัน 00:00 (เวลาไทย)
+def daily_reset_thread():
+    while True:
+        now = datetime.utcnow() + timedelta(hours=7)
+        next_reset = datetime.combine(now.date() + timedelta(days=1), datetime.min.time())
+        sleep_seconds = (next_reset - now).total_seconds()
+        time.sleep(sleep_seconds)
+        with app.app_context():
+            reset_approved()
+            log_with_time("[AUTO RESET APPROVED at 00:00 THAI]")
+
+threading.Thread(target=daily_reset_thread, daemon=True).start()
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
