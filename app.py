@@ -94,15 +94,18 @@ def approve():
         ip_approver_map[user_ip] = random_english_name()
     approver_name = ip_approver_map[user_ip]
 
+    now_time = datetime.now()
+    now_time_str = now_time.strftime("%Y-%m-%d %H:%M:%S")
+
     for tx in transactions:
         if tx["id"] == txid:
             tx["status"] = "approved"
             tx["approver_name"] = approver_name
-            tx["approved_time"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            tx["approved_time"] = now_time_str
             tx["customer_user"] = customer_user
             day = tx["time"].strftime("%Y-%m-%d")
             daily_summary_history[day] += tx["amount"]
-            log_with_time(f"[APPROVED] {txid} by {approver_name} ({user_ip}) for customer {customer_user}")
+            log_with_time(f"[APPROVED] {txid} by {approver_name} ({user_ip}) for customer {customer_user} at {now_time_str}")
             break
     save_transactions()
     return jsonify({"status": "success"}), 200
@@ -115,12 +118,15 @@ def cancel():
         ip_approver_map[user_ip] = random_english_name()
     canceler_name = ip_approver_map[user_ip]
 
+    now_time = datetime.now()
+    now_time_str = now_time.strftime("%Y-%m-%d %H:%M:%S")
+
     for tx in transactions:
         if tx["id"] == txid and tx["status"] == "new":
             tx["status"] = "cancelled"
-            tx["cancelled_time"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            tx["cancelled_time"] = now_time_str
             tx["canceler_name"] = canceler_name
-            log_with_time(f"[CANCELLED] {txid} by {canceler_name} ({user_ip})")
+            log_with_time(f"[CANCELLED] {txid} by {canceler_name} ({user_ip}) at {now_time_str}")
             break
     save_transactions()
     return jsonify({"status": "success"}), 200
@@ -161,7 +167,6 @@ def reset_approved():
 @app.route("/reset_cancelled", methods=["POST"])
 def reset_cancelled():
     global transactions
-    # ลบรายการยกเลิกออกจาก transactions เลย
     transactions = [tx for tx in transactions if tx.get("status") != "cancelled"]
     log_with_time("[RESET CANCELLED] All cancelled orders removed")
     save_transactions()
