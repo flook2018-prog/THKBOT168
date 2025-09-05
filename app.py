@@ -24,7 +24,6 @@ BANK_MAP_TH = {
     "TRUEWALLET": "True Wallet",
 }
 
-# โหลดข้อมูลเก่า
 if os.path.exists(DATA_FILE):
     with open(DATA_FILE, "r", encoding="utf-8") as f:
         try:
@@ -56,7 +55,7 @@ def index():
 
 @app.route("/get_transactions")
 def get_transactions():
-    today_str = (datetime.now()).strftime("%Y-%m-%d")
+    today_str = date.today().strftime("%Y-%m-%d")
     today_transactions = [tx for tx in transactions if tx["time"].strftime("%Y-%m-%d") == today_str]
 
     new_orders = [tx for tx in today_transactions if tx["status"] == "new"][-20:][::-1]
@@ -72,6 +71,10 @@ def get_transactions():
         if "bank" in tx: tx["bank"] = BANK_MAP_TH.get(tx["bank"], tx["bank"])
         else: tx["bank"] = "-"
         if "customer_user" not in tx: tx["customer_user"] = "-"
+        if "approver_name" not in tx: tx["approver_name"] = "-"
+        if "canceler_name" not in tx: tx["canceler_name"] = "-"
+        if "approved_time" not in tx: tx["approved_time"] = "-"
+        if "cancelled_time" not in tx: tx["cancelled_time"] = "-"
 
     daily_list = [{"date": d, "total": f"{v:,.2f}"} for d, v in sorted(daily_summary_history.items())]
 
@@ -87,6 +90,7 @@ def get_transactions():
 def approve():
     txid = request.json.get("id")
     customer_user = request.json.get("customer_user")
+    approved_time = request.json.get("approved_time")
     user_ip = request.remote_addr or "unknown"
 
     if user_ip not in ip_approver_map:
@@ -97,11 +101,11 @@ def approve():
         if tx["id"] == txid:
             tx["status"] = "approved"
             tx["approver_name"] = approver_name
-            tx["approved_time"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            tx["approved_time"] = approved_time
             tx["customer_user"] = customer_user
             day = tx["time"].strftime("%Y-%m-%d")
             daily_summary_history[day] += tx["amount"]
-            log_with_time(f"[APPROVED] {txid} by {approver_name} ({user_ip}) for customer {customer_user}")
+            log_with_time(f"[APPROVED] {txid} by {approver_name} ({user_ip}) for {customer_user} at {approved_time}")
             break
     save_transactions()
     return jsonify({"status": "success"}), 200
@@ -109,6 +113,7 @@ def approve():
 @app.route("/cancel", methods=["POST"])
 def cancel():
     txid = request.json.get("id")
+    cancelled_time = request.json.get("cancelled_time")
     user_ip = request.remote_addr or "unknown"
     if user_ip not in ip_approver_map:
         ip_approver_map[user_ip] = random_english_name()
@@ -117,9 +122,9 @@ def cancel():
     for tx in transactions:
         if tx["id"] == txid and tx["status"] == "new":
             tx["status"] = "cancelled"
-            tx["cancelled_time"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            tx["cancelled_time"] = cancelled_time
             tx["canceler_name"] = canceler_name
-            log_with_time(f"[CANCELLED] {txid} by {canceler_name} ({user_ip})")
+            log_with_time(f"[CANCELLED] {txid} by {canceler_name} ({user_ip}) at {cancelled_time}")
             break
     save_transactions()
     return jsonify({"status": "success"}), 200
@@ -145,14 +150,11 @@ def restore():
 
 @app.route("/reset_approved", methods=["POST"])
 def reset_approved():
-    for tx in transactions:
+    for tx in transactions[:]:
         if tx["status"] == "approved":
             day = tx["time"].strftime("%Y-%m-%d")
             daily_summary_history[day] -= tx["amount"]
-            tx["status"] = "new"
-            tx.pop("approver_name", None)
-            tx.pop("approved_time", None)
-            tx.pop("customer_user", None)
+            transactions.remove(tx)
             log_with_time(f"[RESET APPROVED] {tx['id']}")
     save_transactions()
     return jsonify({"status": "success"}), 200
@@ -186,7 +188,7 @@ def webhook():
                 tx_time = datetime.strptime(time_str, "%Y-%m-%dT%H:%M:%S")
             else:
                 tx_time = datetime.strptime(time_str, "%Y-%m-%d %H:%M:%S")
-            tx_time = tx_time + timedelta(hours=7)  # ปรับเวลา +7 ให้ตรงไทย
+            tx_time = tx_time + timedelta(hours=7)
         except:
             tx_time = datetime.now()
 
