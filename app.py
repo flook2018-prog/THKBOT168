@@ -1,6 +1,6 @@
 from flask import Flask, request, jsonify, render_template
 import os, json, random
-from datetime import datetime, date, timedelta
+from datetime import datetime, date, timedelta, timezone
 from collections import defaultdict
 import threading, time
 
@@ -68,10 +68,9 @@ def get_transactions():
     wallet_daily_total = sum(tx["amount"] for tx in approved_orders)
 
     for tx in new_orders + approved_orders + cancelled_orders:
-        # เวลาแสดง
         display_time = tx["time"]
         if tx["status"] == "new":
-            display_time = display_time + timedelta(hours=7)
+            display_time = display_time + timedelta(hours=7)  # New Orders +7 ชั่วโมง
         tx["time_str"] = display_time.strftime("%Y-%m-%d %H:%M:%S")
 
         tx["amount_str"] = f"{tx['amount']:,.2f}"
@@ -98,7 +97,6 @@ def get_transactions():
 def approve():
     txid = request.json.get("id")
     customer_user = request.json.get("customer_user")
-    approved_time = request.json.get("approved_time")  # รับเวลาจาก client
     user_ip = request.remote_addr or "unknown"
 
     if user_ip not in ip_approver_map:
@@ -109,7 +107,7 @@ def approve():
         if tx["id"] == txid:
             tx["status"] = "approved"
             tx["approver_name"] = approver_name
-            tx["approved_time"] = approved_time or datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            tx["approved_time"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             tx["customer_user"] = customer_user
             day = tx["time"].strftime("%Y-%m-%d")
             daily_summary_history[day] += tx["amount"]
@@ -121,7 +119,6 @@ def approve():
 @app.route("/cancel", methods=["POST"])
 def cancel():
     txid = request.json.get("id")
-    cancelled_time = request.json.get("cancelled_time")
     user_ip = request.remote_addr or "unknown"
     if user_ip not in ip_approver_map:
         ip_approver_map[user_ip] = random_english_name()
@@ -130,7 +127,7 @@ def cancel():
     for tx in transactions:
         if tx["id"] == txid and tx["status"] == "new":
             tx["status"] = "cancelled"
-            tx["cancelled_time"] = cancelled_time or datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            tx["cancelled_time"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             tx["canceler_name"] = canceler_name
             log_with_time(f"[CANCELLED] {txid} by {canceler_name} ({user_ip})")
             break
@@ -218,15 +215,18 @@ def webhook():
         log_with_time("[WEBHOOK ERROR]", str(e))
         return jsonify({"status": "error", "message": str(e)}), 500
 
+# ฟังก์ชันรีเซทรายการอนุมัติทุกวันเวลา 00:00 ไทย (UTC+7)
 def daily_reset_thread():
     while True:
-        now = datetime.now()
-        next_reset = datetime.combine(now.date() + timedelta(days=1), datetime.min.time())
-        sleep_seconds = (next_reset - now).total_seconds()
+        now_utc = datetime.utcnow()
+        # เวลาไทย = UTC+7
+        now_th = now_utc + timedelta(hours=7)
+        next_reset_th = datetime.combine(now_th.date() + timedelta(days=1), datetime.min.time())
+        sleep_seconds = (next_reset_th - now_th).total_seconds()
         time.sleep(sleep_seconds)
         with app.app_context():
             reset_approved()
-            log_with_time("[AUTO RESET APPROVED at 00:00]")
+            log_with_time("[AUTO RESET APPROVED at 00:00 Thailand Time]")
 
 threading.Thread(target=daily_reset_thread, daemon=True).start()
 
