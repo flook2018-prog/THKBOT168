@@ -1,6 +1,6 @@
 from flask import Flask, request, jsonify, render_template
 import os, json, jwt, random
-from datetime import datetime, date, timedelta
+from datetime import datetime, date, timedelta, timezone
 from collections import defaultdict
 
 app = Flask(__name__)
@@ -13,7 +13,6 @@ DATA_FILE = "transactions_data.json"
 LOG_FILE = "transactions.log"
 SECRET_KEY = "8d2909e5a59bc24bbf14059e9e591402"
 
-# Mapping ธนาคาร -> ชื่อภาษาไทย
 BANK_MAP_TH = {
     "BBL": "กรุงเทพ",
     "KBANK": "กสิกรไทย",
@@ -23,6 +22,10 @@ BANK_MAP_TH = {
     "TMB": "ทหารไทย",
     "TRUEWALLET": "True Wallet",
 }
+
+# ฟังก์ชันเวลาปัจจุบันไทย
+def now_th():
+    return datetime.now(timezone.utc) + timedelta(hours=7)
 
 # โหลดข้อมูลธุรกรรมเก่า
 if os.path.exists(DATA_FILE):
@@ -39,7 +42,7 @@ def save_transactions():
         json.dump([{**tx, "time": tx["time"].strftime("%Y-%m-%d %H:%M:%S")} for tx in transactions], f, ensure_ascii=False, indent=2)
 
 def log_with_time(*args):
-    ts = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    ts = now_th().strftime('%Y-%m-%d %H:%M:%S')
     msg = f"[{ts}] " + " ".join(str(a) for a in args)
     print(msg)
     with open(LOG_FILE, "a", encoding="utf-8") as f:
@@ -97,7 +100,7 @@ def approve():
         if tx["id"] == txid:
             tx["status"] = "approved"
             tx["approver_name"] = approver_name
-            tx["approved_time"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            tx["approved_time"] = now_th().strftime("%Y-%m-%d %H:%M:%S")
             tx["customer_user"] = customer_user
             day = tx["time"].strftime("%Y-%m-%d")
             daily_summary_history[day] += tx["amount"]
@@ -117,7 +120,7 @@ def cancel():
     for tx in transactions:
         if tx["id"] == txid and tx["status"] == "new":
             tx["status"] = "cancelled"
-            tx["cancelled_time"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            tx["cancelled_time"] = now_th().strftime("%Y-%m-%d %H:%M:%S")
             tx["canceler_name"] = canceler_name
             log_with_time(f"[CANCELLED] {txid} by {canceler_name} ({user_ip})")
             break
@@ -166,7 +169,7 @@ def webhook():
                 tx_time = datetime.strptime(time_str, "%Y-%m-%d %H:%M:%S")
             tx_time = tx_time + timedelta(hours=7)
         except:
-            tx_time = datetime.now()
+            tx_time = now_th()
 
         tx = {
             "id": txid,
