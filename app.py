@@ -13,6 +13,17 @@ DATA_FILE = "transactions_data.json"
 LOG_FILE = "transactions.log"
 SECRET_KEY = "8d2909e5a59bc24bbf14059e9e591402"
 
+# Mapping ธนาคาร -> ชื่อภาษาไทย
+BANK_MAP_TH = {
+    "BBL": "กรุงเทพ",
+    "KBANK": "กสิกรไทย",
+    "SCB": "ไทยพาณิชย์",
+    "KTB": "กรุงไทย",
+    "BAY": "กรุงศรีอยุธยา",
+    "TMB": "ทหารไทย",
+    "TRUEWALLET": "True Wallet",
+}
+
 # โหลดข้อมูลธุรกรรมเก่า
 if os.path.exists(DATA_FILE):
     with open(DATA_FILE, "r", encoding="utf-8") as f:
@@ -58,7 +69,8 @@ def get_transactions():
         tx["time_str"] = tx["time"].strftime("%Y-%m-%d %H:%M:%S")
         tx["amount_str"] = f"{tx['amount']:,.2f}"
         if "name" not in tx: tx["name"] = "-"
-        if "bank" not in tx: tx["bank"] = "-"
+        if "bank" in tx: tx["bank"] = BANK_MAP_TH.get(tx["bank"], tx["bank"])
+        else: tx["bank"] = "-"
         if "customer_user" not in tx: tx["customer_user"] = "-"
 
     daily_list = [{"date": d, "total": f"{v:,.2f}"} for d, v in sorted(daily_summary_history.items())]
@@ -144,6 +156,7 @@ def webhook():
         sender_mobile = decoded.get("sender_mobile", "-")
         name = f"{sender_name} / {sender_mobile}" if sender_mobile else sender_name
         bank_code = decoded.get("channel", "-")
+        bank_name_th = BANK_MAP_TH.get(bank_code, bank_code)
 
         time_str = decoded.get("created_at") or decoded.get("time")
         try:
@@ -160,7 +173,7 @@ def webhook():
             "event": decoded.get("event_type", "Unknown"),
             "amount": amount,
             "name": name,
-            "bank": bank_code,
+            "bank": bank_name_th,
             "status": "new",
             "time": tx_time
         }
