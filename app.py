@@ -1,6 +1,6 @@
 from flask import Flask, request, jsonify, render_template
 import os, json, jwt, random
-from datetime import datetime, timedelta
+from datetime import datetime, date, timedelta
 from collections import defaultdict
 
 app = Flask(__name__)
@@ -45,12 +45,11 @@ def save_transactions():
                 "time": tx["time"].strftime("%Y-%m-%d %H:%M:%S"),
                 **({"approved_time": tx["approved_time"].strftime("%Y-%m-%d %H:%M:%S")} if "approved_time" in tx else {}),
                 **({"cancelled_time": tx["cancelled_time"].strftime("%Y-%m-%d %H:%M:%S")} if "cancelled_time" in tx else {})
-            }
-            for tx in transactions
+            } for tx in transactions
         ], f, ensure_ascii=False, indent=2)
 
 def log_with_time(*args):
-    ts = (datetime.utcnow() + timedelta(hours=7)).strftime('%Y-%m-%d %H:%M:%S')
+    ts = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
     msg = f"[{ts}] " + " ".join(str(a) for a in args)
     print(msg)
     with open(LOG_FILE, "a", encoding="utf-8") as f:
@@ -67,7 +66,7 @@ def index():
 
 @app.route("/get_transactions")
 def get_transactions():
-    today_str = (datetime.utcnow() + timedelta(hours=7)).strftime("%Y-%m-%d")
+    today_str = date.today().strftime("%Y-%m-%d")
     today_transactions = [tx for tx in transactions if tx["time"].strftime("%Y-%m-%d") == today_str]
 
     new_orders = [tx for tx in today_transactions if tx["status"] == "new"][-20:][::-1]
@@ -75,16 +74,19 @@ def get_transactions():
     cancelled_orders = [tx for tx in today_transactions if tx["status"] == "cancelled"][-20:][::-1]
 
     wallet_daily_total = sum(tx["amount"] for tx in approved_orders)
+    wallet_daily_total_str = f"{wallet_daily_total:,.2f}"
 
     for tx in new_orders + approved_orders + cancelled_orders:
+        # เวลาไทยตรงตาม server
         tx["time_str"] = tx["time"].strftime("%Y-%m-%d %H:%M:%S")
         tx["amount_str"] = f"{tx['amount']:,.2f}"
-        if "name" not in tx: tx["name"] = "-"
-        if "bank" in tx: tx["bank"] = BANK_MAP_TH.get(tx["bank"], tx["bank"])
-        else: tx["bank"] = "-"
-        if "customer_user" not in tx: tx["customer_user"] = "-"
-        tx["approved_time_str"] = tx["approved_time"].strftime("%Y-%m-%d %H:%M:%S") if "approved_time" in tx else "-"
-        tx["cancelled_time_str"] = tx["cancelled_time"].strftime("%Y-%m-%d %H:%M:%S") if "cancelled_time" in tx else "-"
+        tx["name"] = tx.get("name","-")
+        tx["bank"] = BANK_MAP_TH.get(tx.get("bank","-"), tx.get("bank","-"))
+        tx["customer_user"] = tx.get("customer_user","-")
+        if "approved_time" in tx:
+            tx["approved_time_str"] = tx["approved_time"].strftime("%Y-%m-%d %H:%M:%S")
+        if "cancelled_time" in tx:
+            tx["cancelled_time_str"] = tx["cancelled_time"].strftime("%Y-%m-%d %H:%M:%S")
 
     daily_list = [{"date": d, "total": f"{v:,.2f}"} for d, v in sorted(daily_summary_history.items())]
 
@@ -92,7 +94,7 @@ def get_transactions():
         "new_orders": new_orders,
         "approved_orders": approved_orders,
         "cancelled_orders": cancelled_orders,
-        "wallet_daily_total": f"{wallet_daily_total:,.2f}",
+        "wallet_daily_total": wallet_daily_total_str,
         "daily_summary": daily_list
     })
 
@@ -110,7 +112,7 @@ def approve():
         if tx["id"] == txid:
             tx["status"] = "approved"
             tx["approver_name"] = approver_name
-            tx["approved_time"] = datetime.utcnow() + timedelta(hours=7)
+            tx["approved_time"] = datetime.now()
             tx["customer_user"] = customer_user
             day = tx["time"].strftime("%Y-%m-%d")
             daily_summary_history[day] += tx["amount"]
@@ -130,7 +132,7 @@ def cancel():
     for tx in transactions:
         if tx["id"] == txid and tx["status"] == "new":
             tx["status"] = "cancelled"
-            tx["cancelled_time"] = datetime.utcnow() + timedelta(hours=7)
+            tx["cancelled_time"] = datetime.now()
             tx["canceler_name"] = canceler_name
             log_with_time(f"[CANCELLED] {txid} by {canceler_name} ({user_ip})")
             break
@@ -187,15 +189,15 @@ def webhook():
         bank_code = decoded.get("channel", "-")
         bank_name_th = BANK_MAP_TH.get(bank_code, bank_code)
 
+        # เวลาไทยตรงตาม server (ไม่ต้อง +7)
         time_str = decoded.get("created_at") or decoded.get("time")
         try:
             if "T" in time_str:
                 tx_time = datetime.strptime(time_str, "%Y-%m-%dT%H:%M:%S")
             else:
                 tx_time = datetime.strptime(time_str, "%Y-%m-%d %H:%M:%S")
-            tx_time += timedelta(hours=7)
         except:
-            tx_time = datetime.utcnow() + timedelta(hours=7)
+            tx_time = datetime.now()
 
         tx = {
             "id": txid,
