@@ -1,6 +1,6 @@
 from flask import Flask, request, jsonify, render_template
 import os, json, jwt, random
-from datetime import datetime, timedelta
+from datetime import datetime, date, timedelta
 from collections import defaultdict
 
 app = Flask(__name__)
@@ -23,7 +23,7 @@ BANK_MAP_TH = {
     "TRUEWALLET": "True Wallet",
 }
 
-# โหลดข้อมูลเก่า
+# โหลดข้อมูลธุรกรรมเก่า
 if os.path.exists(DATA_FILE):
     with open(DATA_FILE, "r", encoding="utf-8") as f:
         try:
@@ -45,8 +45,7 @@ def save_transactions():
                 "time": tx["time"].strftime("%Y-%m-%d %H:%M:%S"),
                 **({"approved_time": tx["approved_time"].strftime("%Y-%m-%d %H:%M:%S")} if "approved_time" in tx else {}),
                 **({"cancelled_time": tx["cancelled_time"].strftime("%Y-%m-%d %H:%M:%S")} if "cancelled_time" in tx else {})
-            }
-            for tx in transactions
+            } for tx in transactions
         ], f, ensure_ascii=False, indent=2)
 
 def log_with_time(*args):
@@ -67,41 +66,34 @@ def index():
 
 @app.route("/get_transactions")
 def get_transactions():
-    today = datetime.now() + timedelta(hours=7)  # เวลาไทย
-    today_str = today.strftime("%Y-%m-%d")
-
-    today_transactions = [tx for tx in transactions if (tx["time"] + timedelta(hours=7)).strftime("%Y-%m-%d") == today_str]
+    today_str = date.today().strftime("%Y-%m-%d")
+    today_transactions = [tx for tx in transactions if tx["time"].strftime("%Y-%m-%d") == today_str]
 
     new_orders = [tx for tx in today_transactions if tx["status"] == "new"][-20:][::-1]
     approved_orders = [tx for tx in today_transactions if tx["status"] == "approved"][-20:][::-1]
     cancelled_orders = [tx for tx in today_transactions if tx["status"] == "cancelled"][-20:][::-1]
 
-    # คำนวณยอด Wallet วันนี้จาก approved orders สด ๆ
     wallet_daily_total = sum(tx["amount"] for tx in approved_orders)
+    wallet_daily_total_str = f"{wallet_daily_total:,.2f}"
 
-    # แปลงเวลา +7 ชั่วโมง สำหรับแสดง
     for tx in new_orders + approved_orders + cancelled_orders:
-        tx["time_str"] = (tx["time"] + timedelta(hours=7)).strftime("%Y-%m-%d %H:%M:%S")
+        tx["time_str"] = tx["time"].strftime("%Y-%m-%d %H:%M:%S")  # เวลาไทย
         tx["amount_str"] = f"{tx['amount']:,.2f}"
         tx["name"] = tx.get("name","-")
         tx["bank"] = BANK_MAP_TH.get(tx.get("bank","-"), tx.get("bank","-"))
         tx["customer_user"] = tx.get("customer_user","-")
         if "approved_time" in tx:
-            tx["approved_time"] = (tx["approved_time"] + timedelta(hours=7)).strftime("%Y-%m-%d %H:%M:%S")
+            tx["approved_time_str"] = tx["approved_time"].strftime("%Y-%m-%d %H:%M:%S")
         if "cancelled_time" in tx:
-            tx["cancelled_time"] = (tx["cancelled_time"] + timedelta(hours=7)).strftime("%Y-%m-%d %H:%M:%S")
+            tx["cancelled_time_str"] = tx["cancelled_time"].strftime("%Y-%m-%d %H:%M:%S")
 
-    # daily summary อิง approved ของวันนั้น
-    daily_list = []
-    for d in sorted(set((tx["time"]+timedelta(hours=7)).strftime("%Y-%m-%d") for tx in transactions if tx["status"]=="approved")):
-        total = sum(tx["amount"] for tx in transactions if tx["status"]=="approved" and (tx["time"]+timedelta(hours=7)).strftime("%Y-%m-%d")==d)
-        daily_list.append({"date": d, "total": f"{total:,.2f}"})
+    daily_list = [{"date": d, "total": f"{v:,.2f}"} for d, v in sorted(daily_summary_history.items())]
 
     return jsonify({
         "new_orders": new_orders,
         "approved_orders": approved_orders,
         "cancelled_orders": cancelled_orders,
-        "wallet_daily_total": f"{wallet_daily_total:,.2f}",
+        "wallet_daily_total": wallet_daily_total_str,
         "daily_summary": daily_list
     })
 
@@ -116,11 +108,13 @@ def approve():
     approver_name = ip_approver_map[user_ip]
 
     for tx in transactions:
-        if tx["id"] == txid and tx["status"] != "approved":
+        if tx["id"] == txid:
             tx["status"] = "approved"
             tx["approver_name"] = approver_name
-            tx["approved_time"] = datetime.now()
+            tx["approved_time"] = datetime.now()  # เวลาที่กระทำจริง
             tx["customer_user"] = customer_user
+            day = tx["time"].strftime("%Y-%m-%d")
+            daily_summary_history[day] += tx["amount"]
             log_with_time(f"[APPROVED] {txid} by {approver_name} ({user_ip}) for customer {customer_user}")
             break
     save_transactions()
@@ -137,7 +131,7 @@ def cancel():
     for tx in transactions:
         if tx["id"] == txid and tx["status"] == "new":
             tx["status"] = "cancelled"
-            tx["cancelled_time"] = datetime.now()
+            tx["cancelled_time"] = datetime.now()  # เวลาที่กระทำจริง
             tx["canceler_name"] = canceler_name
             log_with_time(f"[CANCELLED] {txid} by {canceler_name} ({user_ip})")
             break
@@ -149,6 +143,9 @@ def restore():
     txid = request.json.get("id")
     for tx in transactions:
         if tx["id"] == txid and tx["status"] in ["approved","cancelled"]:
+            if tx["status"] == "approved":
+                day = tx["time"].strftime("%Y-%m-%d")
+                daily_summary_history[day] -= tx["amount"]
             tx["status"] = "new"
             tx.pop("approver_name", None)
             tx.pop("approved_time", None)
@@ -193,9 +190,13 @@ def webhook():
 
         time_str = decoded.get("created_at") or decoded.get("time")
         try:
-            tx_time = datetime.strptime(time_str, "%Y-%m-%dT%H:%M:%S") if "T" in time_str else datetime.strptime(time_str, "%Y-%m-%d %H:%M:%S")
+            if "T" in time_str:
+                tx_time = datetime.strptime(time_str, "%Y-%m-%dT%H:%M:%S")
+            else:
+                tx_time = datetime.strptime(time_str, "%Y-%m-%d %H:%M:%S")
+            tx_time = tx_time + timedelta(hours=7)  # เวลาไทย
         except:
-            tx_time = datetime.now()
+            tx_time = datetime.now() + timedelta(hours=7)
 
         tx = {
             "id": txid,
