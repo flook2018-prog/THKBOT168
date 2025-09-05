@@ -81,7 +81,7 @@ def get_transactions():
 
     # Approved Orders
     for tx in approved_orders:
-        tx["time_str"] = to_thai_time(tx["time"])  # เวลา original
+        tx["time_str"] = to_thai_time(tx["time"])
         tx["approved_time"] = to_thai_time(datetime.strptime(tx["approved_time"], "%Y-%m-%d %H:%M:%S"))
         tx["amount_str"] = f"{tx['amount']:,.2f}"
         if "name" not in tx: tx["name"] = "-"
@@ -91,7 +91,7 @@ def get_transactions():
 
     # Cancelled Orders
     for tx in cancelled_orders:
-        tx["time_str"] = to_thai_time(tx["time"])  # เวลา original
+        tx["time_str"] = to_thai_time(tx["time"])
         tx["cancelled_time"] = to_thai_time(datetime.strptime(tx["cancelled_time"], "%Y-%m-%d %H:%M:%S"))
         tx["amount_str"] = f"{tx['amount']:,.2f}"
         if "name" not in tx: tx["name"] = "-"
@@ -123,7 +123,7 @@ def approve():
         if tx["id"] == txid:
             tx["status"] = "approved"
             tx["approver_name"] = approver_name
-            tx["approved_time"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")  # เวลาอนุมัติจริง
+            tx["approved_time"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             tx["customer_user"] = customer_user
             day = tx["time"].strftime("%Y-%m-%d")
             daily_summary_history[day] += tx["amount"]
@@ -143,7 +143,7 @@ def cancel():
     for tx in transactions:
         if tx["id"] == txid and tx["status"] == "new":
             tx["status"] = "cancelled"
-            tx["cancelled_time"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")  # เวลา Cancel จริง
+            tx["cancelled_time"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             tx["canceler_name"] = canceler_name
             log_with_time(f"[CANCELLED] {txid} by {canceler_name} ({user_ip})")
             break
@@ -205,7 +205,9 @@ def webhook():
         sender_mobile = decoded.get("sender_mobile", "-")
         name = f"{sender_name} / {sender_mobile}" if sender_mobile else sender_name
         bank_code = decoded.get("channel", "-")
-        bank_name_th = BANK_MAP_TH.get(bank_code, bank_code)
+        bank_name_th = BANK_MAP_TH.get(bank_code.upper(), bank_code)  # แก้ TrueWallet ให้ขึ้นชื่อ
+        if bank_name_th == "TRUEWALLET":
+            bank_name_th = "True Wallet"
 
         time_str = decoded.get("created_at") or decoded.get("time")
         try:
@@ -233,7 +235,7 @@ def webhook():
         log_with_time("[WEBHOOK ERROR]", str(e))
         return jsonify({"status": "error", "message": str(e)}), 500
 
-# Auto reset approved at 00:00 ไทย
+# Auto reset approved at 00:00 Thai
 def daily_reset_thread():
     while True:
         now = datetime.now() + timedelta(hours=7)  # เวลาไทย
