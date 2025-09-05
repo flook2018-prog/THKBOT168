@@ -11,19 +11,30 @@ table{width:100%;border-collapse:collapse}
 th,td{padding:12px;text-align:center;font-size:1em}
 th{position:sticky;top:0;z-index:2;background:linear-gradient(90deg,#4a90e2,#007bff);color:white;box-shadow:0 2px 5px rgba(0,0,0,0.1)}
 tr:hover{background-color:#f1f5f9;transition:0.3s}
-button{padding:6px 12px;border:none;border-radius:6px;cursor:pointer;background:#28a745;color:white;transition:0.3s;margin:2px}
-button:hover{background:#218838;transform:scale(1.05)}
+button{padding:6px 12px;border:none;border-radius:6px;cursor:pointer;transition:0.3s;margin:2px}
+button:hover{transform:scale(1.05)}
+button.approve{background:#28a745;color:white}
+button.approve:hover{background:#218838}
+button.cancel{background:#ffc107;color:white}
+button.cancel:hover{background:#e0a800}
+button.restore{background:#dc3545;color:white}
+button.restore:hover{background:#c82333}
+#ip-display{position:absolute;top:10px;right:20px;font-weight:bold;color:#555}
+#wallet-info{font-size:2em;font-weight:bold;color:#28a745;margin-left:10px}
+#refresh-btn{padding:6px 12px;border-radius:6px;background:#007bff;color:white;cursor:pointer;float:right;margin-top:-50px;margin-right:20px}
+#refresh-btn:hover{background:#0056b3}
 ::-webkit-scrollbar{width:8px}
 ::-webkit-scrollbar-thumb{background-color:rgba(0,0,0,0.2);border-radius:4px}
 ::-webkit-scrollbar-track{background:transparent}
-#ip-display{position:absolute;top:10px;right:20px;font-weight:bold;color:#555}
 </style>
 </head>
 <body>
 <h1>THKBot168 Dashboard (Realtime)</h1>
 <div id="ip-display">IP: {{ user_ip }}</div>
+
 <h2>วันที่-เวลา: <span id="current-datetime"></span></h2>
-<h2>💰 ยอด Wallet วันนี้: <span id="wallet-info">0</span> บาท</h2>
+<h2>💰 ยอด Wallet วันนี้: <span id="wallet-info">0</span> บาท
+<button id="refresh-btn" onclick="fetchTransactions()">รีเฟรช</button></h2>
 
 <h2>รายการใหม่ (New Orders)</h2>
 <div class="scroll-box">
@@ -60,79 +71,139 @@ button:hover{background:#218838;transform:scale(1.05)}
 </table>
 </div>
 
+<h2>สรุปยอดอนุมัติรายวัน</h2>
+<div class="scroll-box">
+<table id="daily-summary-table">
+<thead><tr>
+<th>วันที่</th><th>ยอดอนุมัติ</th>
+</tr></thead>
+<tbody></tbody>
+</table>
+</div>
+
 <script>
-function updateCurrentTime(){document.getElementById("current-datetime").innerText=new Date().toLocaleString('en-GB',{hour12:false})}
-setInterval(updateCurrentTime,1000);updateCurrentTime();
+function updateCurrentTime(){
+    document.getElementById("current-datetime").innerText = new Date().toLocaleString('en-GB',{hour12:false})
+}
+setInterval(updateCurrentTime,1000); updateCurrentTime();
 
 async function fetchTransactions(){
-    let resp=await fetch("/get_transactions"); let data=await resp.json();
+    let resp = await fetch("/get_transactions");
+    let data = await resp.json();
 
-    // New Orders
-    let newBody=document.querySelector("#new-orders-table tbody"); newBody.innerHTML="";
-    data.new_orders.forEach(tx=>{
-        let row=newBody.insertRow();
-        row.insertCell(0).innerText=tx.id;
-        row.insertCell(1).innerText=tx.event;
-        row.insertCell(2).innerText=tx.amount_str;
-        row.insertCell(3).innerText=tx.name;
-        row.insertCell(4).innerText=tx.time_str;
-        row.insertCell(5).innerText=tx.bank;
-        let cell=row.insertCell(6);
-        let btnApprove=document.createElement("button");
-        btnApprove.innerText="อนุมัติ";
-        btnApprove.onclick=async ()=>{
-            let customer_user=prompt("กรุณาใส่ยูสเซอร์ลูกค้า เช่น thk101982");
+    // อัพเดทยอด Wallet วันนี้
+    document.getElementById("wallet-info").innerText = data.wallet_daily_total;
+
+    // --- New Orders ---
+    let newBody = document.querySelector("#new-orders-table tbody"); 
+    newBody.innerHTML = "";
+    data.new_orders.forEach(tx => {
+        let row = newBody.insertRow();
+        row.insertCell(0).innerText = tx.id;
+        row.insertCell(1).innerText = tx.event;
+        row.insertCell(2).innerText = tx.amount_str;
+        row.insertCell(3).innerText = tx.name;
+        row.insertCell(4).innerText = tx.time_str;
+        row.insertCell(5).innerText = tx.bank;
+
+        let cell = row.insertCell(6);
+        // ปุ่มอนุมัติ
+        let btnApprove = document.createElement("button");
+        btnApprove.innerText = "อนุมัติ";
+        btnApprove.className = "approve";
+        btnApprove.onclick = async () => {
+            let customer_user = prompt("กรุณาใส่ยูสเซอร์ลูกค้า เช่น thk101982");
             if(!customer_user) return alert("ต้องใส่ยูสเซอร์ลูกค้าก่อนอนุมัติ");
-            await fetch("/approve",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({id:tx.id,customer_user:customer_user})});
+            await fetch("/approve",{
+                method:"POST",
+                headers:{"Content-Type":"application/json"},
+                body:JSON.stringify({id:tx.id,customer_user:customer_user})
+            });
             fetchTransactions();
         };
-        let btnCancel=document.createElement("button");
-        btnCancel.innerText="ยกเลิก";
-        btnCancel.onclick=async ()=>{
-            await fetch("/cancel",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({id:tx.id})});
+
+        // ปุ่มยกเลิก
+        let btnCancel = document.createElement("button");
+        btnCancel.innerText = "ยกเลิก";
+        btnCancel.className = "cancel";
+        btnCancel.onclick = async () => {
+            await fetch("/cancel",{
+                method:"POST",
+                headers:{"Content-Type":"application/json"},
+                body:JSON.stringify({id:tx.id})
+            });
             fetchTransactions();
         };
-        cell.appendChild(btnApprove); cell.appendChild(btnCancel);
+
+        cell.appendChild(btnApprove); 
+        cell.appendChild(btnCancel);
     });
 
-    // Approved Orders
-    let approvedBody=document.querySelector("#approved-orders-table tbody"); approvedBody.innerHTML="";
-    data.approved_orders.forEach(tx=>{
-        let row=approvedBody.insertRow();
-        row.insertCell(0).innerText=tx.id;
-        row.insertCell(1).innerText=tx.event;
-        row.insertCell(2).innerText=tx.amount_str;
-        row.insertCell(3).innerText=tx.name;
-        row.insertCell(4).innerText=tx.time_str;
-        row.insertCell(5).innerText=tx.bank;
-        row.insertCell(6).innerText=tx.approver_name;
-        row.insertCell(7).innerText=tx.approved_time;
-        row.insertCell(8).innerText=tx.customer_user||"-";
-        let restoreBtn=document.createElement("button"); restoreBtn.innerText="คืนเป็น New";
-        restoreBtn.onclick=async ()=>{
-            await fetch("/restore",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({id:tx.id})});
+    // --- Approved Orders ---
+    let approvedBody = document.querySelector("#approved-orders-table tbody"); 
+    approvedBody.innerHTML = "";
+    data.approved_orders.forEach(tx => {
+        let row = approvedBody.insertRow();
+        row.insertCell(0).innerText = tx.id;
+        row.insertCell(1).innerText = tx.event;
+        row.insertCell(2).innerText = tx.amount_str;
+        row.insertCell(3).innerText = tx.name;
+        row.insertCell(4).innerText = tx.time_str;
+        row.insertCell(5).innerText = tx.bank;
+        row.insertCell(6).innerText = tx.approver_name;
+        row.insertCell(7).innerText = tx.approved_time;
+        row.insertCell(8).innerText = tx.customer_user||"-";
+
+        let restoreBtn = document.createElement("button");
+        restoreBtn.innerText = "คืนเป็น New";
+        restoreBtn.className = "restore";
+        restoreBtn.onclick = async () => {
+            if(!confirm("คุณแน่ใจว่าจะคืนรายการนี้เป็น New?")) return;
+            await fetch("/restore",{
+                method:"POST",
+                headers:{"Content-Type":"application/json"},
+                body:JSON.stringify({id:tx.id})
+            });
             fetchTransactions();
         };
         row.insertCell(9).appendChild(restoreBtn);
     });
 
-    // Cancelled Orders
-    let cancelledBody=document.querySelector("#cancelled-orders-table tbody"); cancelledBody.innerHTML="";
-    data.cancelled_orders.forEach(tx=>{
-        let row=cancelledBody.insertRow();
-        row.insertCell(0).innerText=tx.id;
-        row.insertCell(1).innerText=tx.event;
-        row.insertCell(2).innerText=tx.amount_str;
-        row.insertCell(3).innerText=tx.name;
-        row.insertCell(4).innerText=tx.time_str;
-        row.insertCell(5).innerText=tx.bank;
-        row.insertCell(6).innerText=tx.cancelled_time;
-        let restoreBtn=document.createElement("button"); restoreBtn.innerText="คืนเป็น New";
-        restoreBtn.onclick=async ()=>{
-            await fetch("/restore",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({id:tx.id})});
+    // --- Cancelled Orders ---
+    let cancelledBody = document.querySelector("#cancelled-orders-table tbody"); 
+    cancelledBody.innerHTML = "";
+    data.cancelled_orders.forEach(tx => {
+        let row = cancelledBody.insertRow();
+        row.insertCell(0).innerText = tx.id;
+        row.insertCell(1).innerText = tx.event;
+        row.insertCell(2).innerText = tx.amount_str;
+        row.insertCell(3).innerText = tx.name;
+        row.insertCell(4).innerText = tx.time_str;
+        row.insertCell(5).innerText = tx.bank;
+        row.insertCell(6).innerText = tx.cancelled_time;
+
+        let restoreBtn = document.createElement("button");
+        restoreBtn.innerText = "คืนเป็น New";
+        restoreBtn.className = "restore";
+        restoreBtn.onclick = async () => {
+            if(!confirm("คุณแน่ใจว่าจะคืนรายการนี้เป็น New?")) return;
+            await fetch("/restore",{
+                method:"POST",
+                headers:{"Content-Type":"application/json"},
+                body:JSON.stringify({id:tx.id})
+            });
             fetchTransactions();
         };
         row.insertCell(7).appendChild(restoreBtn);
+    });
+
+    // --- Daily Summary Table ---
+    let dailyBody = document.querySelector("#daily-summary-table tbody");
+    dailyBody.innerHTML = "";
+    data.daily_summary.forEach(d => {
+        let row = dailyBody.insertRow();
+        row.insertCell(0).innerText = d.date;
+        row.insertCell(1).innerText = d.total;
     });
 }
 setInterval(fetchTransactions,3000);
