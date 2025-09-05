@@ -1,7 +1,8 @@
 from flask import Flask, request, jsonify, render_template
 import os, json, jwt, random
-from datetime import datetime, date, timedelta, timezone
+from datetime import datetime, date, timedelta
 from collections import defaultdict
+import threading, time
 
 app = Flask(__name__)
 
@@ -13,6 +14,7 @@ DATA_FILE = "transactions_data.json"
 LOG_FILE = "transactions.log"
 SECRET_KEY = "8d2909e5a59bc24bbf14059e9e591402"
 
+# Mapping ธนาคาร -> ชื่อภาษาไทย
 BANK_MAP_TH = {
     "BBL": "กรุงเทพ",
     "KBANK": "กสิกรไทย",
@@ -22,10 +24,6 @@ BANK_MAP_TH = {
     "TMB": "ทหารไทย",
     "TRUEWALLET": "True Wallet",
 }
-
-# ฟังก์ชันเวลาปัจจุบันไทย
-def now_th():
-    return datetime.now(timezone.utc) + timedelta(hours=7)
 
 # โหลดข้อมูลธุรกรรมเก่า
 if os.path.exists(DATA_FILE):
@@ -42,7 +40,7 @@ def save_transactions():
         json.dump([{**tx, "time": tx["time"].strftime("%Y-%m-%d %H:%M:%S")} for tx in transactions], f, ensure_ascii=False, indent=2)
 
 def log_with_time(*args):
-    ts = now_th().strftime('%Y-%m-%d %H:%M:%S')
+    ts = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
     msg = f"[{ts}] " + " ".join(str(a) for a in args)
     print(msg)
     with open(LOG_FILE, "a", encoding="utf-8") as f:
@@ -100,7 +98,7 @@ def approve():
         if tx["id"] == txid:
             tx["status"] = "approved"
             tx["approver_name"] = approver_name
-            tx["approved_time"] = now_th().strftime("%Y-%m-%d %H:%M:%S")
+            tx["approved_time"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             tx["customer_user"] = customer_user
             day = tx["time"].strftime("%Y-%m-%d")
             daily_summary_history[day] += tx["amount"]
@@ -120,7 +118,7 @@ def cancel():
     for tx in transactions:
         if tx["id"] == txid and tx["status"] == "new":
             tx["status"] = "cancelled"
-            tx["cancelled_time"] = now_th().strftime("%Y-%m-%d %H:%M:%S")
+            tx["cancelled_time"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             tx["canceler_name"] = canceler_name
             log_with_time(f"[CANCELLED] {txid} by {canceler_name} ({user_ip})")
             break
@@ -143,6 +141,31 @@ def restore():
             tx.pop("canceler_name", None)
             log_with_time(f"[RESTORED] {txid} -> new")
             break
+    save_transactions()
+    return jsonify({"status": "success"}), 200
+
+@app.route("/reset_approved", methods=["POST"])
+def reset_approved():
+    for tx in transactions:
+        if tx["status"] == "approved":
+            day = tx["time"].strftime("%Y-%m-%d")
+            daily_summary_history[day] -= tx["amount"]
+            tx["status"] = "new"
+            tx.pop("approver_name", None)
+            tx.pop("approved_time", None)
+            tx.pop("customer_user", None)
+            log_with_time(f"[RESET APPROVED] {tx['id']}")
+    save_transactions()
+    return jsonify({"status": "success"}), 200
+
+@app.route("/reset_cancelled", methods=["POST"])
+def reset_cancelled():
+    for tx in transactions:
+        if tx["status"] == "cancelled":
+            tx["status"] = "new"
+            tx.pop("canceler_name", None)
+            tx.pop("cancelled_time", None)
+            log_with_time(f"[RESET CANCELLED] {tx['id']}")
     save_transactions()
     return jsonify({"status": "success"}), 200
 
@@ -169,7 +192,7 @@ def webhook():
                 tx_time = datetime.strptime(time_str, "%Y-%m-%d %H:%M:%S")
             tx_time = tx_time + timedelta(hours=7)
         except:
-            tx_time = now_th()
+            tx_time = datetime.now()
 
         tx = {
             "id": txid,
@@ -187,6 +210,19 @@ def webhook():
     except Exception as e:
         log_with_time("[WEBHOOK ERROR]", str(e))
         return jsonify({"status": "error", "message": str(e)}), 500
+
+# ฟังก์ชันรีเซทรายการอนุมัติทุกวัน 00:00
+def daily_reset_thread():
+    while True:
+        now = datetime.now()
+        next_reset = datetime.combine(now.date() + timedelta(days=1), datetime.min.time())
+        sleep_seconds = (next_reset - now).total_seconds()
+        time.sleep(sleep_seconds)
+        with app.app_context():
+            reset_approved()
+            log_with_time("[AUTO RESET APPROVED at 00:00]")
+
+threading.Thread(target=daily_reset_thread, daemon=True).start()
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
