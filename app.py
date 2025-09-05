@@ -160,7 +160,6 @@ def restore():
     save_transactions()
     return jsonify({"status": "success"}), 200
 
-# ✅ Reset Approved = ลบออกทั้งหมด
 @app.route("/reset_approved", methods=["POST"])
 def reset_approved():
     global transactions
@@ -177,15 +176,16 @@ def reset_cancelled():
     save_transactions()
     return jsonify({"status": "success"}), 200
 
+# 🔹 Webhook TrueWallet แก้ปัญหา token
 @app.route("/truewallet/webhook", methods=["POST"])
 def webhook():
     try:
         data = request.get_json(force=True)
-        token = data.get("message", "")
+        token = data.get("token", "")  # <-- แก้จาก message → token
         decoded = jwt.decode(token, SECRET_KEY, algorithms=["HS256"], options={"verify_iat": False})
 
         txid = decoded.get("transaction_id") or f"TX{len(transactions)+1}"
-        amount = int(decoded.get("amount", 0)) / 100
+        amount = float(decoded.get("amount", 0))  # รองรับ float
         sender_name = decoded.get("sender_name", "-")
         sender_mobile = decoded.get("sender_mobile", "-")
         name = f"{sender_name} / {sender_mobile}" if sender_mobile else sender_name
