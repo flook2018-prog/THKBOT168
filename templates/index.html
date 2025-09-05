@@ -1,11 +1,11 @@
 <!DOCTYPE html>
 <html>
 <head>
+<meta charset="utf-8">
 <title>THKBot168 Dashboard</title>
 <style>
 body{font-family:'Segoe UI',sans-serif;background:#f0f2f5;margin:0;padding:20px;color:#333}
 h1{text-align:center;margin-bottom:20px}
-h2{margin:10px 0}
 #top-bar{display:flex;justify-content:space-between;flex-wrap:wrap;margin-bottom:20px;gap:10px}
 .summary-card{background:#fff;border-radius:12px;padding:15px;box-shadow:0 4px 12px rgba(0,0,0,0.08);min-width:250px;flex:1}
 .summary-card h2{font-size:1.2em;text-align:center;margin-bottom:10px;}
@@ -20,14 +20,10 @@ th{position:sticky;top:0;background:#f8f9fa;z-index:2}
 tr:hover{background-color:#f1f5f9;transition:0.3s}
 button{padding:5px 10px;border:none;border-radius:6px;cursor:pointer;transition:0.3s;margin:2px}
 button.approve{background:#28a745;color:white}
-button.approve:hover{background:#218838}
 button.cancel{background:#dc3545;color:white}
 button.restore{background:#ffc107;color:#333}
 button.restore:hover{background:#e0a800}
 #ip-display{position:absolute;top:10px;right:20px;font-weight:bold;color:#555}
-::-webkit-scrollbar{width:8px}
-::-webkit-scrollbar-thumb{background-color:rgba(0,0,0,0.2);border-radius:4px}
-::-webkit-scrollbar-track{background:transparent}
 </style>
 </head>
 <body>
@@ -66,21 +62,21 @@ button.restore:hover{background:#e0a800}
     </div>
   </div>
   <div id="right-column">
-    <h2>รายการอนุมัติ (Approved)</h2>
+    <h2>รายการอนุมัติ (Approved Orders)</h2>
     <div class="scroll-box">
       <table id="approved-orders-table">
         <thead>
-        <tr><th>ID</th><th>Bank</th><th>Name</th><th>Amount</th><th>เวลาอนุมัติ</th></tr>
+        <tr><th>ID</th><th>Bank</th><th>Name</th><th>Amount</th><th>ผู้อนุมัติ</th><th>เวลาอนุมัติ</th></tr>
         </thead>
         <tbody></tbody>
       </table>
     </div>
 
-    <h2>รายการยกเลิก (Cancelled)</h2>
+    <h2>รายการยกเลิก (Cancelled Orders)</h2>
     <div class="scroll-box">
       <table id="cancelled-orders-table">
         <thead>
-        <tr><th>ID</th><th>Bank</th><th>Name</th><th>Amount</th><th>เวลา</th></tr>
+        <tr><th>ID</th><th>Bank</th><th>Name</th><th>Amount</th><th>ผู้ยกเลิก</th><th>เวลายกเลิก</th></tr>
         </thead>
         <tbody></tbody>
       </table>
@@ -90,81 +86,81 @@ button.restore:hover{background:#e0a800}
 
 <script>
 async function fetchTransactions(){
-  const res = await fetch('/get_transactions');
+  const res = await fetch("/get_transactions");
   const data = await res.json();
 
-  document.getElementById('wallet-info').innerText = data.wallet_daily_total;
+  document.getElementById("wallet-info").innerText = data.wallet_daily_total;
 
-  // Daily summary
-  const dsBody = document.querySelector('#daily-summary tbody');
-  dsBody.innerHTML = '';
+  const dailyBody = document.querySelector("#daily-summary tbody");
+  dailyBody.innerHTML = "";
   data.daily_summary.forEach(d=>{
-    const tr = document.createElement('tr');
-    tr.innerHTML = `<td>${d.date}</td><td>${d.total}</td>`;
-    dsBody.appendChild(tr);
+    const tr=document.createElement("tr");
+    tr.innerHTML=`<td>${d.date}</td><td>${d.total}</td>`;
+    dailyBody.appendChild(tr);
   });
 
-  // New orders
-  const newBody = document.querySelector('#new-orders-table tbody');
-  newBody.innerHTML = '';
-  data.new_orders.forEach(tx=>{
-    const tr = document.createElement('tr');
-    tr.innerHTML = `<td>${tx.id}</td><td>${tx.bank}</td><td>${tx.name}</td><td>${tx.amount_str}</td><td>${tx.time_str}</td>
-      <td>
-        <button class="approve" onclick="approve('${tx.id}')">Approve</button>
-        <button class="cancel" onclick="cancel('${tx.id}')">Cancel</button>
-      </td>`;
-    newBody.appendChild(tr);
-  });
+  function renderTable(tbody_id, rows, type){
+    const tbody = document.querySelector(tbody_id);
+    tbody.innerHTML="";
+    rows.forEach(tx=>{
+      let action="";
+      if(type==="new"){
+        action=`<button class="approve" onclick="approve('${tx.id}')">อนุมัติ</button>
+                <button class="cancel" onclick="cancel('${tx.id}')">ยกเลิก</button>`;
+      }
+      const tr=document.createElement("tr");
+      if(type==="new"){
+        tr.innerHTML=`<td>${tx.id}</td><td>${tx.bank}</td><td>${tx.name}</td><td>${tx.amount_str}</td><td>${tx.time_str}</td><td>${action}</td>`;
+      } else if(type==="approved"){
+        tr.innerHTML=`<td>${tx.id}</td><td>${tx.bank}</td><td>${tx.name}</td><td>${tx.amount_str}</td><td>${tx.approver_name}</td><td>${tx.approved_time}</td>`;
+      } else {
+        tr.innerHTML=`<td>${tx.id}</td><td>${tx.bank}</td><td>${tx.name}</td><td>${tx.amount_str}</td><td>${tx.canceler_name}</td><td>${tx.cancelled_time}</td>`;
+      }
+      tbody.appendChild(tr);
+    });
+  }
 
-  // Approved
-  const apBody = document.querySelector('#approved-orders-table tbody');
-  apBody.innerHTML = '';
-  data.approved_orders.forEach(tx=>{
-    const tr = document.createElement('tr');
-    tr.innerHTML = `<td>${tx.id}</td><td>${tx.bank}</td><td>${tx.name}</td><td>${tx.amount_str}</td><td>${tx.approved_time}</td>`;
-    apBody.appendChild(tr);
-  });
-
-  // Cancelled
-  const canBody = document.querySelector('#cancelled-orders-table tbody');
-  canBody.innerHTML = '';
-  data.cancelled_orders.forEach(tx=>{
-    const tr = document.createElement('tr');
-    tr.innerHTML = `<td>${tx.id}</td><td>${tx.bank}</td><td>${tx.name}</td><td>${tx.amount_str}</td><td>${tx.cancelled_time}</td>`;
-    canBody.appendChild(tr);
-  });
+  renderTable("#new-orders-table tbody", data.new_orders, "new");
+  renderTable("#approved-orders-table tbody", data.approved_orders, "approved");
+  renderTable("#cancelled-orders-table tbody", data.cancelled_orders, "cancelled");
 }
 
 async function approve(id){
   const customer_user = prompt("ใส่ Customer User (เช่น thk101982):");
   if(!customer_user) return;
-  await fetch('/approve',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id,customer_user})});
+  const now_time = new Date().toISOString().slice(0,19).replace("T"," ");
+  await fetch('/approve',{
+    method:'POST',
+    headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({id, customer_user, approved_time: now_time})
+  });
   fetchTransactions();
 }
 
 async function cancel(id){
-  await fetch('/cancel',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id})});
+  const now_time = new Date().toISOString().slice(0,19).replace("T"," ");
+  await fetch('/cancel',{
+    method:'POST',
+    headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({id, cancelled_time: now_time})
+  });
   fetchTransactions();
 }
 
 async function resetApproved(){
-  if(confirm("ยืนยันรีเซทรายการอนุมัติทั้งหมด?")){
-    await fetch('/reset_approved',{method:'POST'});
-    fetchTransactions();
-  }
+  if(!confirm("คุณต้องการลบรายการอนุมัติทั้งหมด?")) return;
+  await fetch("/reset_approved",{method:"POST"});
+  fetchTransactions();
 }
 
 async function resetCancelled(){
-  if(confirm("ยืนยันรีเซทรายการยกเลิกทั้งหมด?")){
-    await fetch('/reset_cancelled',{method:'POST'});
-    fetchTransactions();
-  }
+  if(!confirm("คุณต้องการลบรายการยกเลิกทั้งหมด?")) return;
+  await fetch("/reset_cancelled",{method:"POST"});
+  fetchTransactions();
 }
 
-setInterval(fetchTransactions,2000);
 fetchTransactions();
+setInterval(fetchTransactions,5000);
 </script>
-
 </body>
 </html>
