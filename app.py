@@ -1,5 +1,5 @@
 from flask import Flask, request, jsonify, render_template
-import os, json, jwt, random
+import os, json, random
 from datetime import datetime, date, timedelta
 from collections import defaultdict
 import threading, time
@@ -12,8 +12,10 @@ ip_approver_map = {}
 
 DATA_FILE = "transactions_data.json"
 LOG_FILE = "transactions.log"
+
 SECRET_KEY = "8d2909e5a59bc24bbf14059e9e591402"
 
+# Mapping ธนาคาร -> ชื่อภาษาไทย
 BANK_MAP_TH = {
     "BBL": "กรุงเทพ",
     "KBANK": "กสิกรไทย",
@@ -24,6 +26,7 @@ BANK_MAP_TH = {
     "TRUEWALLET": "True Wallet",
 }
 
+# โหลดข้อมูลธุรกรรมเก่า
 if os.path.exists(DATA_FILE):
     with open(DATA_FILE, "r", encoding="utf-8") as f:
         try:
@@ -65,7 +68,12 @@ def get_transactions():
     wallet_daily_total = sum(tx["amount"] for tx in approved_orders)
 
     for tx in new_orders + approved_orders + cancelled_orders:
-        tx["time_str"] = tx["time"].strftime("%Y-%m-%d %H:%M:%S")
+        # เวลาแสดง
+        display_time = tx["time"]
+        if tx["status"] == "new":
+            display_time = display_time + timedelta(hours=7)
+        tx["time_str"] = display_time.strftime("%Y-%m-%d %H:%M:%S")
+
         tx["amount_str"] = f"{tx['amount']:,.2f}"
         if "name" not in tx: tx["name"] = "-"
         if "bank" in tx: tx["bank"] = BANK_MAP_TH.get(tx["bank"], tx["bank"])
@@ -90,7 +98,7 @@ def get_transactions():
 def approve():
     txid = request.json.get("id")
     customer_user = request.json.get("customer_user")
-    approved_time = request.json.get("approved_time")
+    approved_time = request.json.get("approved_time")  # รับเวลาจาก client
     user_ip = request.remote_addr or "unknown"
 
     if user_ip not in ip_approver_map:
@@ -101,11 +109,11 @@ def approve():
         if tx["id"] == txid:
             tx["status"] = "approved"
             tx["approver_name"] = approver_name
-            tx["approved_time"] = approved_time
+            tx["approved_time"] = approved_time or datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             tx["customer_user"] = customer_user
             day = tx["time"].strftime("%Y-%m-%d")
             daily_summary_history[day] += tx["amount"]
-            log_with_time(f"[APPROVED] {txid} by {approver_name} ({user_ip}) for {customer_user} at {approved_time}")
+            log_with_time(f"[APPROVED] {txid} by {approver_name} ({user_ip}) for customer {customer_user}")
             break
     save_transactions()
     return jsonify({"status": "success"}), 200
@@ -122,9 +130,9 @@ def cancel():
     for tx in transactions:
         if tx["id"] == txid and tx["status"] == "new":
             tx["status"] = "cancelled"
-            tx["cancelled_time"] = cancelled_time
+            tx["cancelled_time"] = cancelled_time or datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             tx["canceler_name"] = canceler_name
-            log_with_time(f"[CANCELLED] {txid} by {canceler_name} ({user_ip}) at {cancelled_time}")
+            log_with_time(f"[CANCELLED] {txid} by {canceler_name} ({user_ip})")
             break
     save_transactions()
     return jsonify({"status": "success"}), 200
@@ -155,7 +163,7 @@ def reset_approved():
             day = tx["time"].strftime("%Y-%m-%d")
             daily_summary_history[day] -= tx["amount"]
             transactions.remove(tx)
-            log_with_time(f"[RESET APPROVED] {tx['id']}")
+            log_with_time(f"[RESET APPROVED] {tx['id']} removed")
     save_transactions()
     return jsonify({"status": "success"}), 200
 
@@ -170,6 +178,7 @@ def reset_cancelled():
 @app.route("/truewallet/webhook", methods=["POST"])
 def webhook():
     try:
+        import jwt
         data = request.get_json(force=True)
         token = data.get("message", "")
         decoded = jwt.decode(token, SECRET_KEY, algorithms=["HS256"], options={"verify_iat": False})
