@@ -67,37 +67,35 @@ def index():
     user_ip = request.remote_addr or "unknown"
     return render_template("index.html", user_ip=user_ip)
 
+# 🔹 GET transactions (แก้ไขไม่กรองวัน)
 @app.route("/get_transactions")
 def get_transactions():
-    today_str = date.today().strftime("%Y-%m-%d")
-    today_transactions = [tx for tx in transactions if tx["time"].strftime("%Y-%m-%d") == today_str]
+    # จัดกลุ่มรายการตาม status
+    new_orders = [tx for tx in transactions if tx["status"] == "new"][-20:][::-1]
+    approved_orders = [tx for tx in transactions if tx["status"] == "approved"][-20:][::-1]
+    cancelled_orders = [tx for tx in transactions if tx["status"] == "cancelled"][-20:][::-1]
 
-    new_orders = [tx for tx in today_transactions if tx["status"] == "new"][-20:][::-1]
-    approved_orders = [tx for tx in today_transactions if tx["status"] == "approved"][-20:][::-1]
-    cancelled_orders = [tx for tx in today_transactions if tx["status"] == "cancelled"][-20:][::-1]
-
+    # รวมยอด approved
     wallet_daily_total = sum(tx["amount"] for tx in approved_orders)
 
-    for tx in new_orders + approved_orders + cancelled_orders:
-        tx["time_str"] = tx["time"].strftime("%Y-%m-%d %H:%M:%S")
-        tx["amount_str"] = f"{tx['amount']:,.2f}"
-        if "name" not in tx: tx["name"] = "-"
-        if "bank" in tx: tx["bank"] = BANK_MAP_TH.get(tx["bank"], tx["bank"])
-        else: tx["bank"] = "-"
-        if "customer_user" not in tx: tx["customer_user"] = "-"
-        if "approved_time" in tx and isinstance(tx["approved_time"], datetime):
-            tx["approved_time"] = tx["approved_time"].strftime("%Y-%m-%d %H:%M:%S")
-        if "cancelled_time" in tx and isinstance(tx["cancelled_time"], datetime):
-            tx["cancelled_time"] = tx["cancelled_time"].strftime("%Y-%m-%d %H:%M:%S")
-
-    daily_list = [{"date": d, "total": f"{v:,.2f}"} for d, v in sorted(daily_summary_history.items())]
+    # แก้ไขข้อมูลสำหรับแสดงบนหน้าเว็บ
+    for tx_list in [new_orders, approved_orders, cancelled_orders]:
+        for tx in tx_list:
+            tx["time_str"] = tx["time"].strftime("%Y-%m-%d %H:%M:%S")
+            tx["amount_str"] = f"{tx['amount']:,.2f}"
+            tx["name"] = tx.get("name", "-")
+            tx["bank"] = tx.get("bank", "-")
+            tx["customer_user"] = tx.get("customer_user", "-")
+            if "approved_time" in tx and isinstance(tx["approved_time"], datetime):
+                tx["approved_time"] = tx["approved_time"].strftime("%Y-%m-%d %H:%M:%S")
+            if "cancelled_time" in tx and isinstance(tx["cancelled_time"], datetime):
+                tx["cancelled_time"] = tx["cancelled_time"].strftime("%Y-%m-%d %H:%M:%S")
 
     return jsonify({
         "new_orders": new_orders,
         "approved_orders": approved_orders,
         "cancelled_orders": cancelled_orders,
-        "wallet_daily_total": f"{wallet_daily_total:,.2f}",
-        "daily_summary": daily_list
+        "wallet_daily_total": f"{wallet_daily_total:,.2f}"
     })
 
 @app.route("/approve", methods=["POST"])
@@ -176,16 +174,16 @@ def reset_cancelled():
     save_transactions()
     return jsonify({"status": "success"}), 200
 
-# 🔹 Webhook TrueWallet แก้ปัญหา token
+# 🔹 Webhook TrueWallet
 @app.route("/truewallet/webhook", methods=["POST"])
 def webhook():
     try:
         data = request.get_json(force=True)
-        token = data.get("token", "")  # <-- แก้จาก message → token
+        token = data.get("token", "")
         decoded = jwt.decode(token, SECRET_KEY, algorithms=["HS256"], options={"verify_iat": False})
 
         txid = decoded.get("transaction_id") or f"TX{len(transactions)+1}"
-        amount = float(decoded.get("amount", 0))  # รองรับ float
+        amount = float(decoded.get("amount", 0))
         sender_name = decoded.get("sender_name", "-")
         sender_mobile = decoded.get("sender_mobile", "-")
         name = f"{sender_name} / {sender_mobile}" if sender_mobile else sender_name
