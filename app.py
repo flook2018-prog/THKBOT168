@@ -160,12 +160,10 @@ def reset_approved():
 
 @app.route("/reset_cancelled", methods=["POST"])
 def reset_cancelled():
-    for tx in transactions:
-        if tx["status"] == "cancelled":
-            tx["status"] = "new"
-            tx.pop("canceler_name", None)
-            tx.pop("cancelled_time", None)
-            log_with_time(f"[RESET CANCELLED] {tx['id']}")
+    global transactions
+    # ลบรายการยกเลิกออกจาก transactions เลย
+    transactions = [tx for tx in transactions if tx.get("status") != "cancelled"]
+    log_with_time("[RESET CANCELLED] All cancelled orders removed")
     save_transactions()
     return jsonify({"status": "success"}), 200
 
