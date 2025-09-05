@@ -56,7 +56,7 @@ def index():
 
 @app.route("/get_transactions")
 def get_transactions():
-    today_str = date.today().strftime("%Y-%m-%d")
+    today_str = (datetime.now()).strftime("%Y-%m-%d")
     today_transactions = [tx for tx in transactions if tx["time"].strftime("%Y-%m-%d") == today_str]
 
     new_orders = [tx for tx in today_transactions if tx["status"] == "new"][-20:][::-1]
@@ -93,18 +93,15 @@ def approve():
         ip_approver_map[user_ip] = random_english_name()
     approver_name = ip_approver_map[user_ip]
 
-    now_time = datetime.now()
-    now_time_str = now_time.strftime("%Y-%m-%d %H:%M:%S")
-
     for tx in transactions:
         if tx["id"] == txid:
             tx["status"] = "approved"
             tx["approver_name"] = approver_name
-            tx["approved_time"] = now_time_str
+            tx["approved_time"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             tx["customer_user"] = customer_user
             day = tx["time"].strftime("%Y-%m-%d")
             daily_summary_history[day] += tx["amount"]
-            log_with_time(f"[APPROVED] {txid} by {approver_name} ({user_ip}) for customer {customer_user} at {now_time_str}")
+            log_with_time(f"[APPROVED] {txid} by {approver_name} ({user_ip}) for customer {customer_user}")
             break
     save_transactions()
     return jsonify({"status": "success"}), 200
@@ -117,15 +114,12 @@ def cancel():
         ip_approver_map[user_ip] = random_english_name()
     canceler_name = ip_approver_map[user_ip]
 
-    now_time = datetime.now()
-    now_time_str = now_time.strftime("%Y-%m-%d %H:%M:%S")
-
     for tx in transactions:
         if tx["id"] == txid and tx["status"] == "new":
             tx["status"] = "cancelled"
-            tx["cancelled_time"] = now_time_str
+            tx["cancelled_time"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             tx["canceler_name"] = canceler_name
-            log_with_time(f"[CANCELLED] {txid} by {canceler_name} ({user_ip}) at {now_time_str}")
+            log_with_time(f"[CANCELLED] {txid} by {canceler_name} ({user_ip})")
             break
     save_transactions()
     return jsonify({"status": "success"}), 200
@@ -192,7 +186,7 @@ def webhook():
                 tx_time = datetime.strptime(time_str, "%Y-%m-%dT%H:%M:%S")
             else:
                 tx_time = datetime.strptime(time_str, "%Y-%m-%d %H:%M:%S")
-            tx_time = tx_time + timedelta(hours=7)
+            tx_time = tx_time + timedelta(hours=7)  # ปรับเวลา +7 ให้ตรงไทย
         except:
             tx_time = datetime.now()
 
@@ -213,7 +207,6 @@ def webhook():
         log_with_time("[WEBHOOK ERROR]", str(e))
         return jsonify({"status": "error", "message": str(e)}), 500
 
-# Auto reset approved daily
 def daily_reset_thread():
     while True:
         now = datetime.now()
