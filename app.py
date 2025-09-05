@@ -52,11 +52,14 @@ def get_transactions():
     approved_orders = [tx for tx in today_transactions if tx["status"] == "approved"][-20:][::-1]
     cancelled_orders = [tx for tx in today_transactions if tx["status"] == "cancelled"][-20:][::-1]
 
-    wallet_daily_total = daily_summary_history.get(today_str, 0)
+    wallet_daily_total = sum(tx["amount"] for tx in approved_orders)
 
     for tx in new_orders + approved_orders + cancelled_orders:
         tx["time_str"] = tx["time"].strftime("%Y-%m-%d %H:%M:%S")
         tx["amount_str"] = f"{tx['amount']:,.2f}"
+        if "name" not in tx: tx["name"] = "-"
+        if "bank" not in tx: tx["bank"] = "-"
+        if "customer_user" not in tx: tx["customer_user"] = "-"
 
     daily_list = [{"date": d, "total": f"{v:,.2f}"} for d, v in sorted(daily_summary_history.items())]
 
@@ -94,11 +97,17 @@ def approve():
 @app.route("/cancel", methods=["POST"])
 def cancel():
     txid = request.json.get("id")
+    user_ip = request.remote_addr or "unknown"
+    if user_ip not in ip_approver_map:
+        ip_approver_map[user_ip] = random_english_name()
+    canceler_name = ip_approver_map[user_ip]
+
     for tx in transactions:
         if tx["id"] == txid and tx["status"] == "new":
             tx["status"] = "cancelled"
             tx["cancelled_time"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            log_with_time(f"[CANCELLED] {txid}")
+            tx["canceler_name"] = canceler_name
+            log_with_time(f"[CANCELLED] {txid} by {canceler_name} ({user_ip})")
             break
     save_transactions()
     return jsonify({"status": "success"}), 200
@@ -116,6 +125,7 @@ def restore():
             tx.pop("approved_time", None)
             tx.pop("cancelled_time", None)
             tx.pop("customer_user", None)
+            tx.pop("canceler_name", None)
             log_with_time(f"[RESTORED] {txid} -> new")
             break
     save_transactions()
