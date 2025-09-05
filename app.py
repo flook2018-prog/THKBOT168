@@ -71,6 +71,7 @@ def get_transactions():
 @app.route("/approve", methods=["POST"])
 def approve():
     txid = request.json.get("id")
+    customer_user = request.json.get("customer_user")
     user_ip = request.remote_addr or "unknown"
 
     if user_ip not in ip_approver_map:
@@ -81,11 +82,11 @@ def approve():
         if tx["id"] == txid:
             tx["status"] = "approved"
             tx["approver_name"] = approver_name
-            # เวลาอนุมัติตรงกับเวลาลูกค้า + UTC+7
-            tx["approved_time"] = tx["time"].strftime("%Y-%m-%d %H:%M:%S")
+            tx["approved_time"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            tx["customer_user"] = customer_user
             day = tx["time"].strftime("%Y-%m-%d")
             daily_summary_history[day] += tx["amount"]
-            log_with_time(f"[APPROVED] {txid} by {approver_name} ({user_ip})")
+            log_with_time(f"[APPROVED] {txid} by {approver_name} ({user_ip}) for customer {customer_user}")
             break
     save_transactions()
     return jsonify({"status": "success"}), 200
@@ -96,8 +97,7 @@ def cancel():
     for tx in transactions:
         if tx["id"] == txid and tx["status"] == "new":
             tx["status"] = "cancelled"
-            # เวลา Cancel ตรงกับเวลาลูกค้า + UTC+7
-            tx["cancelled_time"] = tx["time"].strftime("%Y-%m-%d %H:%M:%S")
+            tx["cancelled_time"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             log_with_time(f"[CANCELLED] {txid}")
             break
     save_transactions()
@@ -115,6 +115,7 @@ def restore():
             tx.pop("approver_name", None)
             tx.pop("approved_time", None)
             tx.pop("cancelled_time", None)
+            tx.pop("customer_user", None)
             log_with_time(f"[RESTORED] {txid} -> new")
             break
     save_transactions()
