@@ -99,7 +99,6 @@ async function fetchTransactions(){
 
     document.getElementById("wallet-info").innerText = data.wallet_daily_total;
 
-    // Daily Summary
     let dailyBody = document.querySelector("#daily-summary tbody");
     dailyBody.innerHTML="";
     data.daily_summary.forEach(d=>{
@@ -108,7 +107,6 @@ async function fetchTransactions(){
         row.insertCell(1).innerText=d.total;
     });
 
-    // New Orders
     let newBody = document.querySelector("#new-orders-table tbody");
     newBody.innerHTML="";
     data.new_orders.forEach(tx=>{
@@ -137,7 +135,6 @@ async function fetchTransactions(){
         cell.appendChild(btnApprove); cell.appendChild(btnCancel);
     });
 
-    // Approved Orders
     let approvedBody=document.querySelector("#approved-orders-table tbody");
     approvedBody.innerHTML="";
     data.approved_orders.forEach(tx=>{
@@ -161,7 +158,6 @@ async function fetchTransactions(){
         row.insertCell(9).appendChild(restoreBtn);
     });
 
-    // Cancelled Orders
     let cancelledBody=document.querySelector("#cancelled-orders-table tbody");
     cancelledBody.innerHTML="";
     data.cancelled_orders.forEach(tx=>{
@@ -185,7 +181,6 @@ async function fetchTransactions(){
     });
 }
 
-// รีเซทรายการ
 async function resetApproved(){
     if(!confirm("คุณแน่ใจว่าจะรีเซทรายการที่อนุมัติทั้งหมด?")) return;
     await fetch("/reset_approved",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({confirm:true})});
