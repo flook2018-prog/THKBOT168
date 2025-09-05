@@ -3,7 +3,6 @@
 <head>
 <title>THKBot168 Dashboard</title>
 <style>
-/* ใส่ CSS เดิมของคุณ */
 body{font-family:'Segoe UI',sans-serif;background:#f0f2f5;margin:0;padding:20px;color:#333}
 h1{text-align:center;margin-bottom:20px}
 h2{margin:10px 0}
@@ -60,19 +59,28 @@ button.restore:hover{background:#e0a800}
     <div class="scroll-box">
       <table id="new-orders-table">
         <thead>
-        <tr><th>ID</th><th>ประเภท</th><th>จำนวน</th><th>ชื่อ/เบอร์</th><th>เวลา</th><th>ธนาคาร</th><th>จัดการ</th></tr>
+        <tr><th>ID</th><th>Bank</th><th>Name</th><th>Amount</th><th>เวลา</th><th>Action</th></tr>
         </thead>
         <tbody></tbody>
       </table>
     </div>
   </div>
   <div id="right-column">
-    <h2>รายการที่อนุมัติแล้ว (Approved Orders)</h2>
+    <h2>รายการอนุมัติ (Approved)</h2>
     <div class="scroll-box">
       <table id="approved-orders-table">
         <thead>
-        <tr><th>ID</th><th>ประเภท</th><th>จำนวน</th><th>ชื่อ/เบอร์</th><th>เวลา</th>
-        <th>ธนาคาร</th><th>ผู้อนุมัติ</th><th>เวลาอนุมัติ</th><th>ยูสเซอร์ลูกค้า</th><th>คืนเป็น New</th></tr>
+        <tr><th>ID</th><th>Bank</th><th>Name</th><th>Amount</th><th>เวลาอนุมัติ</th></tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+    </div>
+
+    <h2>รายการยกเลิก (Cancelled)</h2>
+    <div class="scroll-box">
+      <table id="cancelled-orders-table">
+        <thead>
+        <tr><th>ID</th><th>Bank</th><th>Name</th><th>Amount</th><th>เวลา</th></tr>
         </thead>
         <tbody></tbody>
       </table>
@@ -80,22 +88,83 @@ button.restore:hover{background:#e0a800}
   </div>
 </div>
 
-<div id="bottom-row">
-  <h2>รายการยกเลิก (Cancelled Orders)</h2>
-  <div class="scroll-box">
-    <table id="cancelled-orders-table">
-      <thead>
-      <tr><th>ID</th><th>ประเภท</th><th>จำนวน</th><th>ชื่อ/เบอร์</th><th>เวลา</th>
-      <th>ธนาคาร</th><th>ผู้ยกเลิก</th><th>เวลา Cancel</th><th>คืนเป็น New</th></tr>
-      </thead>
-      <tbody></tbody>
-    </table>
-  </div>
-</div>
-
 <script>
-// JS สำหรับอัปเดทเวลาอนุมัติ/ยกเลิกทันที
-/* ใช้โค้ดจากที่ผมแก้ Frontend ให้ */
+async function fetchTransactions(){
+  const res = await fetch('/get_transactions');
+  const data = await res.json();
+
+  document.getElementById('wallet-info').innerText = data.wallet_daily_total;
+
+  // Daily summary
+  const dsBody = document.querySelector('#daily-summary tbody');
+  dsBody.innerHTML = '';
+  data.daily_summary.forEach(d=>{
+    const tr = document.createElement('tr');
+    tr.innerHTML = `<td>${d.date}</td><td>${d.total}</td>`;
+    dsBody.appendChild(tr);
+  });
+
+  // New orders
+  const newBody = document.querySelector('#new-orders-table tbody');
+  newBody.innerHTML = '';
+  data.new_orders.forEach(tx=>{
+    const tr = document.createElement('tr');
+    tr.innerHTML = `<td>${tx.id}</td><td>${tx.bank}</td><td>${tx.name}</td><td>${tx.amount_str}</td><td>${tx.time_str}</td>
+      <td>
+        <button class="approve" onclick="approve('${tx.id}')">Approve</button>
+        <button class="cancel" onclick="cancel('${tx.id}')">Cancel</button>
+      </td>`;
+    newBody.appendChild(tr);
+  });
+
+  // Approved
+  const apBody = document.querySelector('#approved-orders-table tbody');
+  apBody.innerHTML = '';
+  data.approved_orders.forEach(tx=>{
+    const tr = document.createElement('tr');
+    tr.innerHTML = `<td>${tx.id}</td><td>${tx.bank}</td><td>${tx.name}</td><td>${tx.amount_str}</td><td>${tx.approved_time}</td>`;
+    apBody.appendChild(tr);
+  });
+
+  // Cancelled
+  const canBody = document.querySelector('#cancelled-orders-table tbody');
+  canBody.innerHTML = '';
+  data.cancelled_orders.forEach(tx=>{
+    const tr = document.createElement('tr');
+    tr.innerHTML = `<td>${tx.id}</td><td>${tx.bank}</td><td>${tx.name}</td><td>${tx.amount_str}</td><td>${tx.cancelled_time}</td>`;
+    canBody.appendChild(tr);
+  });
+}
+
+async function approve(id){
+  const customer_user = prompt("ใส่ Customer User (เช่น thk101982):");
+  if(!customer_user) return;
+  await fetch('/approve',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id,customer_user})});
+  fetchTransactions();
+}
+
+async function cancel(id){
+  await fetch('/cancel',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id})});
+  fetchTransactions();
+}
+
+async function resetApproved(){
+  if(confirm("ยืนยันรีเซทรายการอนุมัติทั้งหมด?")){
+    await fetch('/reset_approved',{method:'POST'});
+    fetchTransactions();
+  }
+}
+
+async function resetCancelled(){
+  if(confirm("ยืนยันรีเซทรายการยกเลิกทั้งหมด?")){
+    await fetch('/reset_cancelled',{method:'POST'});
+    fetchTransactions();
+  }
+}
+
+setInterval(fetchTransactions,2000);
+fetchTransactions();
 </script>
+
 </body>
 </html>
