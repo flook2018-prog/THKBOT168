@@ -1,6 +1,6 @@
 from flask import Flask, request, jsonify, render_template
 import os, json, jwt, random
-from datetime import datetime, date, timedelta
+from datetime import datetime, timedelta
 from collections import defaultdict
 
 app = Flask(__name__)
@@ -70,15 +70,16 @@ def get_transactions():
     today = datetime.now() + timedelta(hours=7)  # เวลาไทย
     today_str = today.strftime("%Y-%m-%d")
 
-    today_transactions = [tx for tx in transactions if tx["time"].strftime("%Y-%m-%d") == today_str]
+    today_transactions = [tx for tx in transactions if (tx["time"] + timedelta(hours=7)).strftime("%Y-%m-%d") == today_str]
 
     new_orders = [tx for tx in today_transactions if tx["status"] == "new"][-20:][::-1]
     approved_orders = [tx for tx in today_transactions if tx["status"] == "approved"][-20:][::-1]
     cancelled_orders = [tx for tx in today_transactions if tx["status"] == "cancelled"][-20:][::-1]
 
+    # คำนวณยอด Wallet วันนี้จาก approved orders สด ๆ
     wallet_daily_total = sum(tx["amount"] for tx in approved_orders)
 
-    # แปลงเวลาไทยสำหรับแสดง
+    # แปลงเวลา +7 ชั่วโมง สำหรับแสดง
     for tx in new_orders + approved_orders + cancelled_orders:
         tx["time_str"] = (tx["time"] + timedelta(hours=7)).strftime("%Y-%m-%d %H:%M:%S")
         tx["amount_str"] = f"{tx['amount']:,.2f}"
@@ -90,7 +91,11 @@ def get_transactions():
         if "cancelled_time" in tx:
             tx["cancelled_time"] = (tx["cancelled_time"] + timedelta(hours=7)).strftime("%Y-%m-%d %H:%M:%S")
 
-    daily_list = [{"date": d, "total": f"{v:,.2f}"} for d, v in sorted(daily_summary_history.items())]
+    # daily summary อิง approved ของวันนั้น
+    daily_list = []
+    for d in sorted(set((tx["time"]+timedelta(hours=7)).strftime("%Y-%m-%d") for tx in transactions if tx["status"]=="approved")):
+        total = sum(tx["amount"] for tx in transactions if tx["status"]=="approved" and (tx["time"]+timedelta(hours=7)).strftime("%Y-%m-%d")==d)
+        daily_list.append({"date": d, "total": f"{total:,.2f}"})
 
     return jsonify({
         "new_orders": new_orders,
@@ -111,13 +116,11 @@ def approve():
     approver_name = ip_approver_map[user_ip]
 
     for tx in transactions:
-        if tx["id"] == txid:
+        if tx["id"] == txid and tx["status"] != "approved":
             tx["status"] = "approved"
             tx["approver_name"] = approver_name
             tx["approved_time"] = datetime.now()
             tx["customer_user"] = customer_user
-            day = tx["time"].strftime("%Y-%m-%d")
-            daily_summary_history[day] += tx["amount"]
             log_with_time(f"[APPROVED] {txid} by {approver_name} ({user_ip}) for customer {customer_user}")
             break
     save_transactions()
@@ -146,9 +149,6 @@ def restore():
     txid = request.json.get("id")
     for tx in transactions:
         if tx["id"] == txid and tx["status"] in ["approved","cancelled"]:
-            if tx["status"] == "approved":
-                day = tx["time"].strftime("%Y-%m-%d")
-                daily_summary_history[day] -= tx["amount"]
             tx["status"] = "new"
             tx.pop("approver_name", None)
             tx.pop("approved_time", None)
@@ -176,7 +176,6 @@ def reset_cancelled():
     save_transactions()
     return jsonify({"status": "success"}), 200
 
-# 🔹 Webhook TrueWallet
 @app.route("/truewallet/webhook", methods=["POST"])
 def webhook():
     try:
@@ -194,11 +193,7 @@ def webhook():
 
         time_str = decoded.get("created_at") or decoded.get("time")
         try:
-            if "T" in time_str:
-                tx_time = datetime.strptime(time_str, "%Y-%m-%dT%H:%M:%S")
-            else:
-                tx_time = datetime.strptime(time_str, "%Y-%m-%d %H:%M:%S")
-            # เก็บเวลาตาม server ไม่ต้อง +7
+            tx_time = datetime.strptime(time_str, "%Y-%m-%dT%H:%M:%S") if "T" in time_str else datetime.strptime(time_str, "%Y-%m-%d %H:%M:%S")
         except:
             tx_time = datetime.now()
 
