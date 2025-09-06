@@ -55,32 +55,26 @@ def index():
 
 @app.route("/get_transactions")
 def get_transactions():
-    # เวลาไทยสำหรับวันนี้
-    today_str = (datetime.utcnow() + timedelta(hours=7)).strftime("%Y-%m-%d")
-    
-    today_transactions = []
+    # เพิ่ม +7 ชั่วโมงเพื่อแสดงเวลาในเว็บ
     for tx in transactions:
-        # เวลาที่จะแสดงบนเว็บสำหรับรายการใหม่ (+7)
-        display_time = tx["time"] + timedelta(hours=7)
-        tx["_display_time"] = display_time
-        if display_time.strftime("%Y-%m-%d") == today_str:
-            today_transactions.append(tx)
+        tx["_display_time"] = tx["time"] + timedelta(hours=7)
 
-    new_orders = [tx for tx in today_transactions if tx["status"] == "new"][::-1]
-    approved_orders = [tx for tx in today_transactions if tx["status"] == "approved"][::-1]
-    cancelled_orders = [tx for tx in today_transactions if tx["status"] == "cancelled"][::-1]
+    # แยกรายการตามสถานะ
+    new_orders = [tx for tx in transactions if tx["status"] == "new"][::-1]
+    approved_orders = [tx for tx in transactions if tx["status"] == "approved"][::-1]
+    cancelled_orders = [tx for tx in transactions if tx["status"] == "cancelled"][::-1]
 
     wallet_daily_total = sum(tx["amount"] for tx in approved_orders)
     wallet_daily_total_str = f"{wallet_daily_total:,.2f}"
 
-    # แปลงเวลา +7 ชั่วโมง สำหรับแสดงบนเว็บ (รายการใหม่)
+    # แปลงเวลา +7 ชั่วโมงสำหรับแสดงบนเว็บ (รายการใหม่)
     for tx in new_orders:
         display_time = tx["_display_time"]
         tx["time_str"] = display_time.strftime("%Y-%m-%d %H:%M:%S")
         tx["amount_str"] = f"{tx['amount']:,.2f}"
         tx["name"] = tx.get("name","-")
         tx["bank"] = BANK_MAP_TH.get(tx.get("bank","-"), tx.get("bank","-"))
-    
+
     # รายการ approved/cancelled เวลาจะเป็นเวลาที่กระทำจริง
     for tx in approved_orders + cancelled_orders:
         tx["time_str"] = tx["time"].strftime("%Y-%m-%d %H:%M:%S")
