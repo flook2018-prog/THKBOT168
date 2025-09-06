@@ -1,6 +1,6 @@
 from flask import Flask, request, jsonify, render_template
 import os, json, jwt, random
-from datetime import datetime, timedelta, timezone, date
+from datetime import datetime, timedelta, date
 from collections import defaultdict
 
 app = Flask(__name__)
@@ -12,7 +12,6 @@ ip_approver_map = {}
 DATA_FILE = "transactions_data.json"
 LOG_FILE = "transactions.log"
 SECRET_KEY = "f557ff6589e6d075581d68df1d4f3af7"
-
 BANK_MAP_TH = {
     "BBL": "กรุงเทพ",
     "KBANK": "กสิกรไทย",
@@ -21,6 +20,7 @@ BANK_MAP_TH = {
     "BAY": "กรุงศรีอยุธยา",
     "TMB": "ทหารไทย",
     "TRUEWALLET": "ทรูวอเลท",
+    "7-ELEVEN": "7-Eleven",
 }
 
 # โหลดธุรกรรมเก่า
@@ -30,20 +30,12 @@ if os.path.exists(DATA_FILE):
             transactions = json.load(f)
             for tx in transactions:
                 tx["time"] = datetime.strptime(tx["time"], "%Y-%m-%d %H:%M:%S")
-                if tx.get("approved_time"):
-                    tx["approved_time"] = datetime.strptime(tx["approved_time"], "%Y-%m-%d %H:%M:%S")
-                if tx.get("cancelled_time"):
-                    tx["cancelled_time"] = datetime.strptime(tx["cancelled_time"], "%Y-%m-%d %H:%M:%S")
         except:
             transactions = []
 
 def save_transactions():
     with open(DATA_FILE, "w", encoding="utf-8") as f:
-        json.dump([{**tx,
-                    "time": tx["time"].strftime("%Y-%m-%d %H:%M:%S"),
-                    "approved_time": tx.get("approved_time").strftime("%Y-%m-%d %H:%M:%S") if tx.get("approved_time") else None,
-                    "cancelled_time": tx.get("cancelled_time").strftime("%Y-%m-%d %H:%M:%S") if tx.get("cancelled_time") else None
-                   } for tx in transactions], f, ensure_ascii=False, indent=2)
+        json.dump([{**tx, "time": tx["time"].strftime("%Y-%m-%d %H:%M:%S")} for tx in transactions], f, ensure_ascii=False, indent=2)
 
 def log_with_time(*args):
     ts = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
@@ -74,17 +66,15 @@ def get_transactions():
     wallet_daily_total = sum(tx["amount"] for tx in approved_orders)
     wallet_daily_total_str = f"{wallet_daily_total:,.2f}"
 
-    # แสดงเวลาไทย +7
+    # เตรียมเวลาแสดง +7 ชั่วโมงสำหรับหน้าเว็บ
     for tx in new_orders + approved_orders + cancelled_orders:
         tx["time_str"] = (tx["time"] + timedelta(hours=7)).strftime("%Y-%m-%d %H:%M:%S")
-        tx["amount_str"] = f"{tx['amount']:,.2f}"
-        tx["name"] = tx.get("name","-")
+        tx["amount_str"] = f"{tx['amount']/100:,.2f}"  # แปลงจากสตางค์เป็นบาท
         tx["bank"] = BANK_MAP_TH.get(tx.get("bank","-"), tx.get("bank","-"))
-        tx["customer_user"] = tx.get("customer_user","-")
         tx["approved_time_str"] = (tx["approved_time"] + timedelta(hours=7)).strftime("%Y-%m-%d %H:%M:%S") if tx.get("approved_time") else "-"
         tx["cancelled_time_str"] = (tx["cancelled_time"] + timedelta(hours=7)).strftime("%Y-%m-%d %H:%M:%S") if tx.get("cancelled_time") else "-"
 
-    daily_list = [{"date": d, "total": f"{v:,.2f}"} for d, v in sorted(daily_summary_history.items())]
+    daily_list = [{"date": d, "total": f"{v/100:,.2f}"} for d, v in sorted(daily_summary_history.items())]  # แปลงเป็นบาท
 
     return jsonify({
         "new_orders": new_orders,
@@ -135,42 +125,7 @@ def cancel():
     save_transactions()
     return jsonify({"status": "success"}), 200
 
-@app.route("/restore", methods=["POST"])
-def restore():
-    txid = request.json.get("id")
-    for tx in transactions:
-        if tx["id"] == txid and tx["status"] in ["approved","cancelled"]:
-            if tx["status"] == "approved":
-                day = tx["time"].strftime("%Y-%m-%d")
-                daily_summary_history[day] -= tx["amount"]
-            tx["status"] = "new"
-            tx.pop("approver_name", None)
-            tx.pop("approved_time", None)
-            tx.pop("cancelled_time", None)
-            tx.pop("customer_user", None)
-            tx.pop("canceler_name", None)
-            log_with_time(f"[RESTORED] {txid} -> new")
-            break
-    save_transactions()
-    return jsonify({"status": "success"}), 200
-
-@app.route("/reset_approved", methods=["POST"])
-def reset_approved():
-    global transactions
-    transactions = [tx for tx in transactions if tx.get("status") != "approved"]
-    log_with_time("[RESET APPROVED] All approved orders removed")
-    save_transactions()
-    return jsonify({"status": "success"}), 200
-
-@app.route("/reset_cancelled", methods=["POST"])
-def reset_cancelled():
-    global transactions
-    transactions = [tx for tx in transactions if tx.get("status") != "cancelled"]
-    log_with_time("[RESET CANCELLED] All cancelled orders removed")
-    save_transactions()
-    return jsonify({"status": "success"}), 200
-
-# -------------------- Webhook --------------------
+# -------------------- Webhook TrueWallet --------------------
 @app.route("/truewallet/webhook", methods=["POST"])
 def webhook():
     try:
@@ -179,10 +134,12 @@ def webhook():
             log_with_time("[WEBHOOK ERROR] No JSON received")
             return jsonify({"status":"error","message":"No JSON received"}), 400
 
-        token = data.get("token")
-        if token:
+        # Decode JWT message หากมี
+        message_jwt = data.get("message")
+        decoded = {}
+        if message_jwt:
             try:
-                decoded = jwt.decode(token, SECRET_KEY, algorithms=["HS256"], options={"verify_iat": False})
+                decoded = jwt.decode(message_jwt, SECRET_KEY, algorithms=["HS256"])
             except Exception as e:
                 log_with_time("[JWT ERROR]", str(e))
                 return jsonify({"status":"error","message":"Invalid JWT"}), 400
@@ -194,35 +151,25 @@ def webhook():
         if any(tx["id"] == txid for tx in transactions):
             return jsonify({"status":"success","message":"Transaction exists"}), 200
 
-        # จำนวนเงิน (แปลงสตางค์เป็นบาท)
-        amount = float(decoded.get("amount", 0)) / 100
+        # จำนวนเงิน (แปลงจากสตางค์เป็นบาท)
+        amount = int(decoded.get("amount",0))
 
         # ชื่อ / เบอร์
-        sender_name = decoded.get("sender_name") or "-"
-        sender_mobile = decoded.get("sender_mobile") or "-"
+        sender_name = decoded.get("sender_name","-")
+        sender_mobile = decoded.get("sender_mobile","-")
         name = f"{sender_name} / {sender_mobile}" if sender_mobile else sender_name
 
-        # ธนาคาร
-        event_type = decoded.get("event_type","ฝาก")
-        if event_type in ["P2P","MONEY_LINK"]:
-            bank_name_th = "ทรูวอเลท"
-        else:
-            bank_code = (decoded.get("channel") or decoded.get("bank_code") or "-").upper()
-            bank_name_th = BANK_MAP_TH.get(bank_code, bank_code)
+        # ธนาคาร / ช่องทาง
+        bank_code = (decoded.get("channel") or "-").upper()
+        bank_name_th = BANK_MAP_TH.get(bank_code, bank_code)
 
-        # เวลา: TrueWallet timezone -> แปลงเป็นไทย +7
-        time_str = decoded.get("received_time") or decoded.get("created_at") or ""
+        # ประเภท event
+        event_type = decoded.get("event_type","ฝาก")
+
+        # เวลา received_time ของ TrueWallet
+        time_str = decoded.get("received_time") or datetime.now().isoformat()
         try:
-            if "T" in time_str:
-                if "+" in time_str:  # มี timezone
-                    tx_time = datetime.strptime(time_str, "%Y-%m-%dT%H:%M:%S%z")
-                else:
-                    tx_time = datetime.strptime(time_str, "%Y-%m-%dT%H:%M:%S")
-                    tx_time = tx_time.replace(tzinfo=timezone.utc)
-            else:
-                tx_time = datetime.strptime(time_str, "%Y-%m-%d %H:%M:%S")
-                tx_time = tx_time.replace(tzinfo=timezone.utc)
-            tx_time = tx_time.astimezone(timezone(timedelta(hours=7))).replace(tzinfo=None)
+            tx_time = datetime.strptime(time_str[:19], "%Y-%m-%dT%H:%M:%S")
         except:
             tx_time = datetime.now()
 
