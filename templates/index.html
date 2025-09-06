@@ -97,7 +97,7 @@ button.restore:hover{background:#e0a800}
 function formatThaiTime(timeStr){
     if(!timeStr) return "-";
     let d = new Date(timeStr);
-    // ❌ ไม่บวก +7 อีกต่อไป เอาเวลาจาก server ตรงๆ
+    d.setHours(d.getHours() - 7);  // ✅ ลบ 7 ชั่วโมง
     return d.getFullYear() + "-" 
            + String(d.getMonth()+1).padStart(2,'0') + "-" 
            + String(d.getDate()).padStart(2,'0') + " " 
@@ -201,7 +201,7 @@ async function resetApproved(){
 }
 async function resetCancelled(){
     if(!confirm("คุณแน่ใจว่าจะรีเซทรายการที่ยกเลิกทั้งหมด?")) return;
-    await fetch("/reset_cancelled",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({confirm:true})});
+    await fetch("/reset_cancelled",{method:"POST",{headers:{"Content-Type":"application/json"},body:JSON.stringify({confirm:true})}});
     fetchTransactions();
 }
 
