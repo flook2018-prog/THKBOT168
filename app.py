@@ -99,7 +99,7 @@ def approve():
         if tx["id"] == txid:
             tx["status"] = "approved"
             tx["approver_name"] = approver_name
-            tx["approved_time"] = datetime.now()
+            tx["approved_time"] = datetime.now() + timedelta(hours=7)  # เวลาไทย
             tx["customer_user"] = customer_user
             day = tx["time"].strftime("%Y-%m-%d")
             daily_summary_history[day] += tx["amount"]
@@ -119,7 +119,7 @@ def cancel():
     for tx in transactions:
         if tx["id"] == txid and tx["status"] == "new":
             tx["status"] = "cancelled"
-            tx["cancelled_time"] = datetime.now()
+            tx["cancelled_time"] = datetime.now() + timedelta(hours=7)  # เวลาไทย
             tx["canceler_name"] = canceler_name
             log_with_time(f"[CANCELLED] {txid} by {canceler_name} ({user_ip})")
             break
@@ -193,15 +193,16 @@ def webhook():
         bank_code = decoded.get("channel","-")
         bank_name_th = BANK_MAP_TH.get(bank_code, bank_code)
 
+        # แปลงเวลาเป็นไทย (+7)
         time_str = decoded.get("created_at") or decoded.get("time")
         try:
             if "T" in time_str:
                 tx_time = datetime.strptime(time_str, "%Y-%m-%dT%H:%M:%S")
             else:
                 tx_time = datetime.strptime(time_str, "%Y-%m-%d %H:%M:%S")
-            tx_time -= timedelta(hours=7)
+            tx_time += timedelta(hours=7)  # เวลาไทย
         except:
-            tx_time = datetime.now()
+            tx_time = datetime.now() + timedelta(hours=7)
 
         tx = {
             "id": txid,
@@ -210,7 +211,8 @@ def webhook():
             "name": name,
             "bank": bank_name_th,
             "status": "new",
-            "time": tx_time
+            "time": tx_time,
+            "customer_user": decoded.get("customer_user","-")
         }
 
         transactions.append(tx)
