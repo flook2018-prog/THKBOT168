@@ -22,7 +22,6 @@ BANK_MAP_TH = {
     "TRUEWALLET": "True Wallet",
 }
 
-# ------------------- ใช้ SECRET_KEY ฟิก -------------------
 SECRET_KEY = "f557ff6589e6d075581d68df1d4f3af7"
 
 # โหลดธุรกรรมเก่า
@@ -50,7 +49,6 @@ def random_english_name():
     names = ["Alice","Bob","Charlie","David","Eve","Frank","Grace","Hannah","Ian","Jack","Kathy","Leo","Mia","Nina","Oscar"]
     return random.choice(names)
 
-# -------------------- Flask Endpoints --------------------
 @app.route("/")
 def index():
     user_ip = request.remote_addr or "unknown"
@@ -68,28 +66,19 @@ def get_transactions():
     wallet_daily_total = sum(tx["amount"] for tx in approved_orders)
     wallet_daily_total_str = f"{wallet_daily_total:,.2f}"
 
-    # ฟังก์ชัน format transaction
-    def format_tx(tx):
-        return {
-            "id": tx["id"],
-            "event": tx.get("event","Unknown"),
-            "amount_str": f"{tx['amount']:,.2f}",
-            "name": tx.get("name","-"),
-            "time_str": tx["time"].strftime("%Y-%m-%d %H:%M:%S"),
-            "bank": tx.get("bank","-"),
-            "customer_user": tx.get("customer_user","-")
-        }
-
-    new_orders_fmt = [format_tx(tx) for tx in new_orders]
-    approved_orders_fmt = [format_tx(tx) for tx in approved_orders]
-    cancelled_orders_fmt = [format_tx(tx) for tx in cancelled_orders]
+    for tx in new_orders + approved_orders + cancelled_orders:
+        tx["time_str"] = tx["time"].strftime("%Y-%m-%d %H:%M:%S")
+        tx["amount_str"] = f"{tx['amount']:,.2f}"
+        tx["name"] = tx.get("name","-")
+        tx["bank"] = BANK_MAP_TH.get(tx.get("bank","-"), tx.get("bank","-"))
+        tx["customer_user"] = tx.get("customer_user","-")
 
     daily_list = [{"date": d, "total": f"{v:,.2f}"} for d, v in sorted(daily_summary_history.items())]
 
     return jsonify({
-        "new_orders": new_orders_fmt,
-        "approved_orders": approved_orders_fmt,
-        "cancelled_orders": cancelled_orders_fmt,
+        "new_orders": new_orders,
+        "approved_orders": approved_orders,
+        "cancelled_orders": cancelled_orders,
         "wallet_daily_total": wallet_daily_total_str,
         "daily_summary": daily_list
     })
@@ -179,7 +168,7 @@ def webhook():
             log_with_time("[WEBHOOK ERROR] No JSON received")
             return jsonify({"status":"error","message":"No JSON received"}), 400
 
-        # message คือ JWT web token
+        # message คือ JWT token
         token = data.get("message")
         if not token:
             log_with_time("[WEBHOOK ERROR] No JWT token found")
@@ -193,35 +182,30 @@ def webhook():
             log_with_time("[JWT ERROR]", str(e))
             return jsonify({"status":"error","message":"Invalid JWT"}), 400
 
-        # Transaction ID
         txid = decoded.get("transaction_id") or f"TX{len(transactions)+1}"
         if any(tx["id"] == txid for tx in transactions):
             return jsonify({"status":"success","message":"Transaction exists"}), 200
 
-        # จำนวนเงิน (จากสตางค์ → บาท)
+        # แปลงสตางค์ → บาท
         try:
             amount = float(decoded.get("amount",0)) / 100
         except:
             amount = 0.0
 
-        # ชื่อผู้โอน / เบอร์
         sender_name = decoded.get("sender_name","")
         sender_mobile = decoded.get("sender_mobile","")
         name = f"{sender_name} / {sender_mobile}" if sender_mobile else sender_name or "-"
 
-        # ธนาคาร / ช่องทาง
         channel = decoded.get("channel","")
         bank_name_th = BANK_MAP_TH.get(channel, channel) if channel else "-"
 
-        # เวลา (received_time) +7 ชั่วโมง
-        time_str = decoded.get("received_time") or decoded.get("created_at") or datetime.now().strftime("%Y-%m-%dT%H:%M:%S")
+        time_str = decoded.get("received_time") or datetime.now().strftime("%Y-%m-%dT%H:%M:%S")
         try:
             time_clean = time_str.split('+')[0]
             tx_time = datetime.strptime(time_clean, "%Y-%m-%dT%H:%M:%S") + timedelta(hours=7)
         except:
             tx_time = datetime.now() + timedelta(hours=7)
 
-        # สร้าง transaction ใหม่
         tx = {
             "id": txid,
             "event": decoded.get("event_type","Unknown"),
@@ -236,7 +220,6 @@ def webhook():
         save_transactions()
         log_with_time("[WEBHOOK RECEIVED]", tx)
         return jsonify({"status":"success"}), 200
-
     except Exception as e:
         log_with_time("[WEBHOOK ERROR]", str(e))
         return jsonify({"status":"error","message": str(e)}), 500
