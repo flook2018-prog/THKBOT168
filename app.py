@@ -1,5 +1,5 @@
 from flask import Flask, request, jsonify, render_template
-import os, json, random, threading, time
+import os, json, jwt, random
 from datetime import datetime, date, timedelta
 from collections import defaultdict
 
@@ -22,8 +22,12 @@ BANK_MAP_TH = {
     "TRUEWALLET": "True Wallet",
 }
 
-# -----------------------------------------
-# โหลดข้อมูลเก่า
+# ดึง SECRET_KEY จาก Service Variable ของ Railway
+SECRET_KEY = os.environ.get("TRUEWALLET_SECRET_KEY")
+if not SECRET_KEY:
+    raise Exception("โปรดตั้ง Service Variable 'TRUEWALLET_SECRET_KEY' ใน Railway")
+
+# โหลดข้อมูลธุรกรรมเก่า
 if os.path.exists(DATA_FILE):
     with open(DATA_FILE, "r", encoding="utf-8") as f:
         try:
@@ -32,12 +36,8 @@ if os.path.exists(DATA_FILE):
                 tx["time"] = datetime.strptime(tx["time"], "%Y-%m-%d %H:%M:%S")
         except:
             transactions = []
-else:
-    with open(DATA_FILE, "w", encoding="utf-8") as f:
-        json.dump([], f)
 
-# -----------------------------------------
-# ฟังก์ชันช่วยเหลือ
+# -------------------------- ฟังก์ชันช่วยเหลือ --------------------------
 def save_transactions():
     with open(DATA_FILE, "w", encoding="utf-8") as f:
         json.dump([
@@ -55,14 +55,7 @@ def random_english_name():
     names = ["Alice","Bob","Charlie","David","Eve","Frank","Grace","Hannah","Ian","Jack","Kathy","Leo","Mia","Nina","Oscar"]
     return random.choice(names)
 
-# -----------------------------------------
-# Background auto-fetch (ถ้าอยากต่อยอด)
-# ตอนนี้เวอร์ชันทดสอบ webhook จบแค่รับ request
-# สามารถเพิ่ม auto-fetch ได้ทีหลัง
-
-# -----------------------------------------
-# Flask Endpoints
-
+# -------------------------- Flask Endpoints --------------------------
 @app.route("/")
 def index():
     user_ip = request.remote_addr or "unknown"
@@ -96,9 +89,6 @@ def get_transactions():
         "wallet_daily_total": wallet_daily_total_str,
         "daily_summary": daily_list
     })
-
-# -----------------------------------------
-# Approve / Cancel / Restore / Reset
 
 @app.route("/approve", methods=["POST"])
 def approve():
@@ -176,20 +166,70 @@ def reset_cancelled():
     save_transactions()
     return jsonify({"status": "success"}), 200
 
-# -----------------------------------------
-# Webhook endpoint (รับข้อมูลจาก TrueWallet)
+# -------------------------- Webhook Endpoint --------------------------
 @app.route("/truewallet/webhook", methods=["POST"])
 def webhook():
     try:
-        data = request.get_json(force=True)
-        print("[WEBHOOK RECEIVED]", data)  # แสดงข้อมูลจริงใน console / log
-        return jsonify({"status": "success"}), 200
-    except Exception as e:
-        print("[WEBHOOK ERROR]", str(e))
-        return jsonify({"status": "error", "message": str(e)}), 500
+        data = request.get_json(force=True, silent=True)
+        if not data:
+            log_with_time("[WEBHOOK ERROR] No JSON received")
+            return jsonify({"status":"error","message":"No JSON received"}), 400
 
-# -----------------------------------------
-# Run Flask
+        # decode JWT ถ้ามี token
+        token = data.get("token")
+        if token:
+            try:
+                decoded = jwt.decode(token, SECRET_KEY, algorithms=["HS256"], options={"verify_iat": False})
+                log_with_time("[WEBHOOK DECODED]", decoded)
+            except Exception as e:
+                log_with_time("[JWT ERROR]", str(e))
+                return jsonify({"status":"error","message":"Invalid JWT"}), 400
+        else:
+            decoded = data  # ใช้ raw JSON ถ้าไม่มี token
+            log_with_time("[WEBHOOK RAW]", decoded)
+
+        # เพิ่ม transaction ใหม่ (ถ้ายังไม่มี)
+        txid = decoded.get("transaction_id") or f"TX{len(transactions)+1}"
+        if any(tx["id"] == txid for tx in transactions):
+            return jsonify({"status":"success","message":"Transaction exists"}), 200
+
+        amount = float(decoded.get("amount", 0))
+        sender_name = decoded.get("sender_name","-")
+        sender_mobile = decoded.get("sender_mobile","-")
+        name = f"{sender_name} / {sender_mobile}" if sender_mobile else sender_name
+        bank_code = decoded.get("channel","-")
+        bank_name_th = BANK_MAP_TH.get(bank_code, bank_code)
+
+        time_str = decoded.get("created_at") or decoded.get("time")
+        try:
+            if "T" in time_str:
+                tx_time = datetime.strptime(time_str, "%Y-%m-%dT%H:%M:%S")
+            else:
+                tx_time = datetime.strptime(time_str, "%Y-%m-%d %H:%M:%S")
+            tx_time = tx_time - timedelta(hours=7)
+        except:
+            tx_time = datetime.now()
+
+        tx = {
+            "id": txid,
+            "event": decoded.get("event_type","Unknown"),
+            "amount": amount,
+            "name": name,
+            "bank": bank_name_th,
+            "status": "new",
+            "time": tx_time
+        }
+
+        transactions.append(tx)
+        save_transactions()
+        log_with_time("[WEBHOOK RECEIVED]", tx)
+
+        return jsonify({"status":"success"}), 200
+    except Exception as e:
+        log_with_time("[WEBHOOK ERROR]", str(e))
+        return jsonify({"status":"error","message": str(e)}), 500
+
+# -------------------------- Run Flask --------------------------
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 8080))
     app.run(host="0.0.0.0", port=port)
