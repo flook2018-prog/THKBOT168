@@ -175,7 +175,7 @@ def truewallet_webhook():
         decoded = {}
         if message_jwt:
             try:
-                decoded = jwt.decode(message_jwt, SECRET_KEY, algorithms=["HS256"])
+                decoded = jwt.decode( message_jwt, SECRET_KEY, algorithms=["HS256"])
             except Exception as e:
                 log_with_time("[JWT ERROR]", str(e))
                 return jsonify({"status":"error","message":"Invalid JWT"}), 400
@@ -190,9 +190,20 @@ def truewallet_webhook():
         sender_name = decoded.get("sender_name","-")
         sender_mobile = decoded.get("sender_mobile","-")
         name = f"{sender_name} / {sender_mobile}" if sender_mobile else sender_name
-        bank_code = (decoded.get("channel") or "-").upper()
-        bank_name_th = BANK_MAP_TH.get(bank_code, bank_code)
-        event_type = decoded.get("event_type","ฝาก")
+        event_type = decoded.get("event_type","ฝาก").upper()
+        bank_code = (decoded.get("channel") or "").upper()
+
+        # ---------------- แยกชื่อธนาคาร / TrueWallet / 7-Eleven / ช่องทางอื่น ----------------
+        if event_type == "P2P" or bank_code in ["TRUEWALLET","WALLET"]:
+            bank_name_th = "ทรูวอเลท"
+        elif bank_code in BANK_MAP_TH:
+            bank_name_th = BANK_MAP_TH[bank_code]
+        elif bank_code:  # มี channel แต่ไม่รู้จัก
+            bank_name_th = bank_code
+        else:  # ไม่มีข้อมูล channel
+            bank_name_th = "-"
+
+        # เวลา
         time_str = decoded.get("received_time") or datetime.now().isoformat()
         try:
             tx_time = time_str[:19].replace("T"," ")
