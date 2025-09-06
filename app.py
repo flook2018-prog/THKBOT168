@@ -84,8 +84,7 @@ def get_transactions():
     for tx in new_orders:
         tx["time_str"] = tx["_display_time"].strftime("%Y-%m-%d %H:%M:%S")
         tx["amount_str"] = f"{tx.get('amount',0):,.2f}"
-        sender_name = tx.get("name") or "-"
-        tx["name"] = sender_name
+        tx["name"] = tx.get("name","-")
         tx["bank"] = BANK_MAP_TH.get(tx.get("bank","-"), tx.get("bank","-"))
 
     # แสดงรายการ approved
@@ -214,24 +213,29 @@ def webhook():
         if any(tx["id"] == txid for tx in transactions):
             return jsonify({"status":"success","message":"Transaction exists"}), 200
 
-        # จำนวนเงิน
-        if "amount" in decoded:
-            amount = float(decoded["amount"])
-        elif "amount_str" in decoded:
-            amount = float(decoded["amount_str"])
-        else:
-            amount = 0
+        # จำนวนเงิน: รองรับหลาย key
+        amount = 0
+        for k in ["amount","amount_str","total_amount"]:
+            if k in decoded:
+                try:
+                    amount = float(decoded[k])
+                    break
+                except:
+                    continue
 
         # ชื่อ/เบอร์
         sender_name = decoded.get("sender_name") or decoded.get("name") or "-"
         sender_mobile = decoded.get("sender_mobile") or decoded.get("mobile") or "-"
         name = f"{sender_name} / {sender_mobile}" if sender_mobile else sender_name
 
-        bank_code = decoded.get("channel","-")
+        # ธนาคาร
+        bank_code = decoded.get("channel") or decoded.get("bank_code") or "-"
         bank_name_th = BANK_MAP_TH.get(bank_code.upper(), bank_code)
 
+        # ประเภท event
         event_type = decoded.get("event_type","ฝาก")
 
+        # เวลา: ใช้เวลาเว็บ +7 ชั่วโมง สำหรับแสดง
         time_str = decoded.get("created_at") or decoded.get("time")
         try:
             if "T" in time_str:
