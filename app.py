@@ -182,30 +182,41 @@ def webhook():
             decoded = data
             log_with_time("[WEBHOOK RAW]", decoded)
 
+        # Transaction ID
         txid = decoded.get("transaction_id") or f"TX{len(transactions)+1}"
         if any(tx["id"] == txid for tx in transactions):
             return jsonify({"status":"success","message":"Transaction exists"}), 200
 
-        amount = float(decoded.get("amount",0))
-        sender_name = decoded.get("sender_name","-")
-        sender_mobile = decoded.get("sender_mobile","-")
-        name = f"{sender_name} / {sender_mobile}" if sender_mobile else sender_name
-        bank_code = decoded.get("channel","-")
+        # จำนวนเงิน
+        try:
+            amount = float(decoded.get("amount",0))
+        except:
+            amount = 0.0
+
+        # ชื่อผู้โอน / เบอร์
+        sender_name = decoded.get("sender_name") or "-"
+        sender_mobile = decoded.get("sender_mobile") or "-"
+        name = f"{sender_name} / {sender_mobile}" if sender_mobile != "-" else sender_name
+
+        # ธนาคาร / ช่องทาง
+        bank_code = decoded.get("channel") or "-"
         bank_name_th = BANK_MAP_TH.get(bank_code, bank_code)
 
+        # เวลา (ปรับเป็นไทย UTC+7)
         time_str = decoded.get("created_at") or decoded.get("time")
         try:
             if "T" in time_str:
                 tx_time = datetime.strptime(time_str, "%Y-%m-%dT%H:%M:%S")
             else:
                 tx_time = datetime.strptime(time_str, "%Y-%m-%d %H:%M:%S")
-            tx_time -= timedelta(hours=7)
+            tx_time += timedelta(hours=7)
         except:
-            tx_time = datetime.now()
+            tx_time = datetime.now() + timedelta(hours=7)
 
+        # สร้าง transaction ใหม่
         tx = {
             "id": txid,
-            "event": decoded.get("event_type","Unknown"),
+            "event": decoded.get("event_type","New"),
             "amount": amount,
             "name": name,
             "bank": bank_name_th,
@@ -217,6 +228,7 @@ def webhook():
         save_transactions()
         log_with_time("[WEBHOOK RECEIVED]", tx)
         return jsonify({"status":"success"}), 200
+
     except Exception as e:
         log_with_time("[WEBHOOK ERROR]", str(e))
         return jsonify({"status":"error","message": str(e)}), 500
