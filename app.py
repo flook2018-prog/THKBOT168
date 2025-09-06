@@ -65,17 +65,16 @@ def index():
 
 @app.route("/get_transactions")
 def get_transactions():
-    today_str = date.today().strftime("%Y-%m-%d")
-    today_transactions = [tx for tx in transactions if tx["time"].strftime("%Y-%m-%d") == today_str]
+    # ใช้ทุกรายการล่าสุด 100 รายการ ไม่กรองวันที่
+    sorted_tx = sorted(transactions, key=lambda x: x["time"], reverse=True)
 
-    new_orders = [tx for tx in today_transactions if tx["status"] == "new"][-20:][::-1]
-    approved_orders = [tx for tx in today_transactions if tx["status"] == "approved"][-20:][::-1]
-    cancelled_orders = [tx for tx in today_transactions if tx["status"] == "cancelled"][-20:][::-1]
+    new_orders = [tx for tx in sorted_tx if tx["status"] == "new"][:20]
+    approved_orders = [tx for tx in sorted_tx if tx["status"] == "approved"][:20]
+    cancelled_orders = [tx for tx in sorted_tx if tx["status"] == "cancelled"][:20]
 
     wallet_daily_total = sum(tx["amount"] for tx in approved_orders)
     wallet_daily_total_str = f"{wallet_daily_total:,.2f}"
 
-    # แปลงเวลาเป็น string พร้อม -7 ชั่วโมง
     for tx in new_orders + approved_orders + cancelled_orders:
         tx["time_str"] = (tx["time"] - timedelta(hours=7)).strftime("%Y-%m-%d %H:%M:%S")
         tx["amount_str"] = f"{tx['amount']/100:,.2f}"  # แปลงจากสตางค์เป็นบาท
@@ -92,27 +91,6 @@ def get_transactions():
         "wallet_daily_total": wallet_daily_total_str,
         "daily_summary": daily_list
     })
-
-# -------------------- Raw Transactions --------------------
-@app.route("/get_raw_transactions")
-def get_raw_transactions():
-    raw_data = []
-    for tx in transactions:
-        raw_data.append({
-            "id": tx.get("id"),
-            "event": tx.get("event"),
-            "amount": tx.get("amount"),
-            "name": tx.get("name"),
-            "bank": tx.get("bank"),
-            "status": tx.get("status"),
-            "time": tx.get("time").strftime("%Y-%m-%d %H:%M:%S") if tx.get("time") else None,
-            "approved_time": tx.get("approved_time").strftime("%Y-%m-%d %H:%M:%S") if tx.get("approved_time") else None,
-            "cancelled_time": tx.get("cancelled_time").strftime("%Y-%m-%d %H:%M:%S") if tx.get("cancelled_time") else None,
-            "approver_name": tx.get("approver_name"),
-            "canceler_name": tx.get("canceler_name"),
-            "customer_user": tx.get("customer_user")
-        })
-    return jsonify(raw_data)
 
 # -------------------- Approve / Cancel / Restore / Reset --------------------
 @app.route("/approve", methods=["POST"])
