@@ -173,19 +173,15 @@ def webhook():
         if token:
             try:
                 decoded = jwt.decode(token, SECRET_KEY, algorithms=["HS256"], options={"verify_iat": False})
-                log_with_time("[WEBHOOK DECODED]", decoded)
-            except Exception as e:
-                log_with_time("[JWT ERROR]", str(e))
+            except:
                 return jsonify({"status":"error","message":"Invalid JWT"}), 400
         else:
             decoded = data
-            log_with_time("[WEBHOOK RAW]", decoded)
 
         txid = decoded.get("transaction_id") or f"TX{len(transactions)+1}"
         if any(tx["id"] == txid for tx in transactions):
             return jsonify({"status":"success","message":"Transaction exists"}), 200
 
-        # ===== แก้ไข mapping ฟิลด์ทั้งหมด =====
         amount = float(decoded.get("amount",0))
         sender_name = decoded.get("sender_name") or "-"
         sender_mobile = decoded.get("sender_mobile") or "-"
@@ -201,13 +197,13 @@ def webhook():
                 tx_time = datetime.strptime(time_str, "%Y-%m-%dT%H:%M:%S")
             else:
                 tx_time = datetime.strptime(time_str, "%Y-%m-%d %H:%M:%S")
-            tx_time += timedelta(hours=7)  # แปลงเวลาไทย +7
+            tx_time += timedelta(hours=7)
         except:
             tx_time = datetime.now()
 
         tx = {
             "id": txid,
-            "event": event_type,
+            "event": tx_type,
             "type": tx_type,
             "amount": amount,
             "amount_str": f"{amount:,.2f}",
