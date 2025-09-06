@@ -95,9 +95,15 @@ button.restore:hover{background:#e0a800}
 
 <script>
 function formatThaiTime(timeStr){
-    let d=new Date(timeStr);
-    d.setHours(d.getHours()+7);
-    return d.toISOString().slice(0,19).replace("T"," ");
+    if(!timeStr) return "-";
+    let d = new Date(timeStr);
+    d.setHours(d.getHours() + 7); // เพิ่ม +7 ชั่วโมง
+    return d.getFullYear() + "-" 
+           + String(d.getMonth()+1).padStart(2,'0') + "-" 
+           + String(d.getDate()).padStart(2,'0') + " " 
+           + String(d.getHours()).padStart(2,'0') + ":" 
+           + String(d.getMinutes()).padStart(2,'0') + ":" 
+           + String(d.getSeconds()).padStart(2,'0');
 }
 
 async function fetchTransactions(){
@@ -122,15 +128,8 @@ async function fetchTransactions(){
         row.insertCell(1).innerText=tx.event;
         row.insertCell(2).innerText=tx.amount_str;
         row.insertCell(3).innerText=tx.name || "-";
-
-        // เวลาไทย
-        row.insertCell(4).innerText = formatThaiTime(tx.time_str);
-
-        // แสดง TrueWallet เป็นชื่อไทย
-        let bankName = tx.bank || "-";
-        if(bankName.toUpperCase() === "TRUEWALLET") bankName = "ทรูวอเลท";
-        row.insertCell(5).innerText = bankName;
-
+        row.insertCell(4).innerText=formatThaiTime(tx.time);
+        row.insertCell(5).innerText=tx.bank || "-";
         let cell=row.insertCell(6);
         let btnApprove=document.createElement("button");
         btnApprove.className="approve"; btnApprove.innerText="อนุมัติ";
@@ -149,7 +148,6 @@ async function fetchTransactions(){
         cell.appendChild(btnApprove); cell.appendChild(btnCancel);
     });
 
-    // Approved Orders
     let approvedBody=document.querySelector("#approved-orders-table tbody");
     approvedBody.innerHTML="";
     data.approved_orders.forEach(tx=>{
@@ -158,12 +156,10 @@ async function fetchTransactions(){
         row.insertCell(1).innerText=tx.event;
         row.insertCell(2).innerText=tx.amount_str;
         row.insertCell(3).innerText=tx.name || "-";
-        row.insertCell(4).innerText=formatThaiTime(tx.time_str);
-        let bankName = tx.bank || "-";
-        if(bankName.toUpperCase() === "TRUEWALLET") bankName = "ทรูวอเลท";
-        row.insertCell(5).innerText = bankName;
+        row.insertCell(4).innerText=formatThaiTime(tx.time);
+        row.insertCell(5).innerText=tx.bank || "-";
         row.insertCell(6).innerText=tx.approver_name || "-";
-        row.insertCell(7).innerText=tx.approved_time_str || "-";
+        row.insertCell(7).innerText=formatThaiTime(tx.approved_time);
         row.insertCell(8).innerText=tx.customer_user || "-";
         let restoreBtn=document.createElement("button");
         restoreBtn.className="restore"; restoreBtn.innerText="คืนเป็น New";
@@ -175,7 +171,6 @@ async function fetchTransactions(){
         row.insertCell(9).appendChild(restoreBtn);
     });
 
-    // Cancelled Orders
     let cancelledBody=document.querySelector("#cancelled-orders-table tbody");
     cancelledBody.innerHTML="";
     data.cancelled_orders.forEach(tx=>{
@@ -184,12 +179,10 @@ async function fetchTransactions(){
         row.insertCell(1).innerText=tx.event;
         row.insertCell(2).innerText=tx.amount_str;
         row.insertCell(3).innerText=tx.name || "-";
-        row.insertCell(4).innerText=formatThaiTime(tx.time_str);
-        let bankName = tx.bank || "-";
-        if(bankName.toUpperCase() === "TRUEWALLET") bankName = "ทรูวอเลท";
-        row.insertCell(5).innerText = bankName;
+        row.insertCell(4).innerText=formatThaiTime(tx.time);
+        row.insertCell(5).innerText=tx.bank || "-";
         row.insertCell(6).innerText=tx.canceler_name || "-";
-        row.insertCell(7).innerText=tx.cancelled_time_str || "-";
+        row.insertCell(7).innerText=formatThaiTime(tx.cancelled_time);
         let restoreBtn=document.createElement("button");
         restoreBtn.className="restore"; restoreBtn.innerText="คืนเป็น New";
         restoreBtn.onclick=async ()=>{
