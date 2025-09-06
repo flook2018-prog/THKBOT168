@@ -6,7 +6,7 @@ from collections import defaultdict
 app = Flask(__name__)
 
 transactions = []
-daily_summary_history = defaultdict(float)
+daily_summary_history = defaultdict(int)
 ip_approver_map = {}
 
 DATA_FILE = "transactions_data.json"
@@ -57,7 +57,7 @@ def index():
 @app.route("/get_transactions")
 def get_transactions():
     today_str = date.today().strftime("%Y-%m-%d")
-    today_transactions = [tx for tx in transactions if tx["time"].strftime("%Y-%m-%d") == today_str]
+    today_transactions = [tx for tx in transactions if (tx["time"] + timedelta(hours=7)).strftime("%Y-%m-%d") == today_str]
 
     new_orders = [tx for tx in today_transactions if tx["status"] == "new"][-20:][::-1]
     approved_orders = [tx for tx in today_transactions if tx["status"] == "approved"][-20:][::-1]
@@ -66,19 +66,14 @@ def get_transactions():
     wallet_daily_total = sum(tx["amount"] for tx in approved_orders)
     wallet_daily_total_str = f"{wallet_daily_total:,.2f}"
 
-    # เตรียมเวลาแสดง +7 ชั่วโมงสำหรับหน้าเว็บ
     for tx in new_orders + approved_orders + cancelled_orders:
         tx["time_str"] = (tx["time"] + timedelta(hours=7)).strftime("%Y-%m-%d %H:%M:%S")
-        tx["amount_str"] = f"{tx['amount']/100:,.2f}"  # แปลงจากสตางค์เป็นบาท
-        # กำหนดชื่อธนาคาร TrueWallet ถ้ามี event_type เป็นวอเลท
-        if tx.get("event") in ["P2P", "MONEY_LINK"]:
-            tx["bank"] = "ทรูวอเลท"
-        else:
-            tx["bank"] = BANK_MAP_TH.get(tx.get("bank","-"), tx.get("bank","-"))
-        tx["approved_time_str"] = (tx["approved_time"] + timedelta(hours=7)).strftime("%Y-%m-%d %H:%M:%S") if tx.get("approved_time") else "-"
-        tx["cancelled_time_str"] = (tx["cancelled_time"] + timedelta(hours=7)).strftime("%Y-%m-%d %H:%M:%S") if tx.get("cancelled_time") else "-"
+        tx["amount_str"] = f"{tx['amount']/100:,.2f}"  # แปลงเป็นบาท
+        tx["bank"] = tx.get("bank","-")
+        tx["approved_time_str"] = (tx.get("approved_time",datetime.now()) + timedelta(hours=7)).strftime("%Y-%m-%d %H:%M:%S") if tx.get("approved_time") else "-"
+        tx["cancelled_time_str"] = (tx.get("cancelled_time",datetime.now()) + timedelta(hours=7)).strftime("%Y-%m-%d %H:%M:%S") if tx.get("cancelled_time") else "-"
 
-    daily_list = [{"date": d, "total": f"{v/100:,.2f}"} for d, v in sorted(daily_summary_history.items())]  # แปลงเป็นบาท
+    daily_list = [{"date": d, "total": f"{v/100:,.2f}"} for d, v in sorted(daily_summary_history.items())]
 
     return jsonify({
         "new_orders": new_orders,
@@ -155,7 +150,7 @@ def webhook():
         if any(tx["id"] == txid for tx in transactions):
             return jsonify({"status":"success","message":"Transaction exists"}), 200
 
-        # จำนวนเงิน (เป็นสตางค์)
+        # จำนวนเงิน (สตางค์)
         amount = int(decoded.get("amount",0))
 
         # ชื่อ / เบอร์
@@ -163,18 +158,20 @@ def webhook():
         sender_mobile = decoded.get("sender_mobile","-")
         name = f"{sender_name} / {sender_mobile}" if sender_mobile else sender_name
 
-        # ธนาคาร / ช่องทาง
+        # ประเภท event
         event_type = decoded.get("event_type","ฝาก")
-        bank_code = (decoded.get("channel") or "-").upper()
-        bank_name_th = BANK_MAP_TH.get(bank_code, bank_code)
-        # ถ้าเป็น TrueWallet ให้ธนาคารเป็น "ทรูวอเลท"
+
+        # ธนาคาร
+        channel = decoded.get("channel","").upper()
         if event_type in ["P2P","MONEY_LINK"]:
             bank_name_th = "ทรูวอเลท"
+        else:
+            bank_name_th = BANK_MAP_TH.get(channel, channel or "-")
 
-        # เวลา received_time ของ TrueWallet
+        # เวลา received_time
         time_str = decoded.get("received_time") or datetime.now().isoformat()
         try:
-            tx_time = datetime.strptime(time_str[:19], "%Y-%m-%dT%H:%M:%S")
+            tx_time = datetime.fromisoformat(time_str)
         except:
             tx_time = datetime.now()
 
