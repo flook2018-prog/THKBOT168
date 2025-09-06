@@ -70,7 +70,11 @@ def get_transactions():
     for tx in new_orders + approved_orders + cancelled_orders:
         tx["time_str"] = (tx["time"] + timedelta(hours=7)).strftime("%Y-%m-%d %H:%M:%S")
         tx["amount_str"] = f"{tx['amount']/100:,.2f}"  # แปลงจากสตางค์เป็นบาท
-        tx["bank"] = BANK_MAP_TH.get(tx.get("bank","-"), tx.get("bank","-"))
+        # กำหนดชื่อธนาคาร TrueWallet ถ้ามี event_type เป็นวอเลท
+        if tx.get("event") in ["P2P", "MONEY_LINK"]:
+            tx["bank"] = "ทรูวอเลท"
+        else:
+            tx["bank"] = BANK_MAP_TH.get(tx.get("bank","-"), tx.get("bank","-"))
         tx["approved_time_str"] = (tx["approved_time"] + timedelta(hours=7)).strftime("%Y-%m-%d %H:%M:%S") if tx.get("approved_time") else "-"
         tx["cancelled_time_str"] = (tx["cancelled_time"] + timedelta(hours=7)).strftime("%Y-%m-%d %H:%M:%S") if tx.get("cancelled_time") else "-"
 
@@ -151,7 +155,7 @@ def webhook():
         if any(tx["id"] == txid for tx in transactions):
             return jsonify({"status":"success","message":"Transaction exists"}), 200
 
-        # จำนวนเงิน (แปลงจากสตางค์เป็นบาท)
+        # จำนวนเงิน (เป็นสตางค์)
         amount = int(decoded.get("amount",0))
 
         # ชื่อ / เบอร์
@@ -160,11 +164,12 @@ def webhook():
         name = f"{sender_name} / {sender_mobile}" if sender_mobile else sender_name
 
         # ธนาคาร / ช่องทาง
+        event_type = decoded.get("event_type","ฝาก")
         bank_code = (decoded.get("channel") or "-").upper()
         bank_name_th = BANK_MAP_TH.get(bank_code, bank_code)
-
-        # ประเภท event
-        event_type = decoded.get("event_type","ฝาก")
+        # ถ้าเป็น TrueWallet ให้ธนาคารเป็น "ทรูวอเลท"
+        if event_type in ["P2P","MONEY_LINK"]:
+            bank_name_th = "ทรูวอเลท"
 
         # เวลา received_time ของ TrueWallet
         time_str = decoded.get("received_time") or datetime.now().isoformat()
