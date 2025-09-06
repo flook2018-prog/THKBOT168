@@ -11,7 +11,7 @@ ip_approver_map = {}
 
 DATA_FILE = "transactions_data.json"
 LOG_FILE = "transactions.log"
-
+SECRET_KEY = "f557ff6589e6d075581d68df1d4f3af7"
 BANK_MAP_TH = {
     "BBL": "กรุงเทพ",
     "KBANK": "กสิกรไทย",
@@ -21,9 +21,6 @@ BANK_MAP_TH = {
     "TMB": "ทหารไทย",
     "TRUEWALLET": "True Wallet",
 }
-
-# ------------------- ใช้ SECRET_KEY ฟิก -------------------
-SECRET_KEY = "f557ff6589e6d075581d68df1d4f3af7"
 
 # โหลดธุรกรรมเก่า
 if os.path.exists(DATA_FILE):
