@@ -20,6 +20,7 @@ BANK_MAP_TH = {
     "BAY": "กรุงศรีอยุธยา",
     "TMB": "ทหารไทย",
     "TRUEWALLET": "ทรูวอเลท",
+    "7-ELEVEN": "7-Eleven",
 }
 
 # โหลดธุรกรรมเก่า
@@ -68,14 +69,12 @@ def get_transactions():
     # เตรียมเวลาแสดง +7 ชั่วโมงสำหรับหน้าเว็บ
     for tx in new_orders + approved_orders + cancelled_orders:
         tx["time_str"] = (tx["time"] + timedelta(hours=7)).strftime("%Y-%m-%d %H:%M:%S")
-        tx["amount_str"] = f"{tx['amount']:,.2f}"
-        tx["name"] = tx.get("name","-")
+        tx["amount_str"] = f"{tx['amount']/100:,.2f}"  # แปลงจากสตางค์เป็นบาท
         tx["bank"] = BANK_MAP_TH.get(tx.get("bank","-"), tx.get("bank","-"))
-        tx["customer_user"] = tx.get("customer_user","-")
         tx["approved_time_str"] = (tx["approved_time"] + timedelta(hours=7)).strftime("%Y-%m-%d %H:%M:%S") if tx.get("approved_time") else "-"
         tx["cancelled_time_str"] = (tx["cancelled_time"] + timedelta(hours=7)).strftime("%Y-%m-%d %H:%M:%S") if tx.get("cancelled_time") else "-"
 
-    daily_list = [{"date": d, "total": f"{v:,.2f}"} for d, v in sorted(daily_summary_history.items())]
+    daily_list = [{"date": d, "total": f"{v/100:,.2f}"} for d, v in sorted(daily_summary_history.items())]  # แปลงเป็นบาท
 
     return jsonify({
         "new_orders": new_orders,
@@ -126,42 +125,7 @@ def cancel():
     save_transactions()
     return jsonify({"status": "success"}), 200
 
-@app.route("/restore", methods=["POST"])
-def restore():
-    txid = request.json.get("id")
-    for tx in transactions:
-        if tx["id"] == txid and tx["status"] in ["approved","cancelled"]:
-            if tx["status"] == "approved":
-                day = tx["time"].strftime("%Y-%m-%d")
-                daily_summary_history[day] -= tx["amount"]
-            tx["status"] = "new"
-            tx.pop("approver_name", None)
-            tx.pop("approved_time", None)
-            tx.pop("cancelled_time", None)
-            tx.pop("customer_user", None)
-            tx.pop("canceler_name", None)
-            log_with_time(f"[RESTORED] {txid} -> new")
-            break
-    save_transactions()
-    return jsonify({"status": "success"}), 200
-
-@app.route("/reset_approved", methods=["POST"])
-def reset_approved():
-    global transactions
-    transactions = [tx for tx in transactions if tx.get("status") != "approved"]
-    log_with_time("[RESET APPROVED] All approved orders removed")
-    save_transactions()
-    return jsonify({"status": "success"}), 200
-
-@app.route("/reset_cancelled", methods=["POST"])
-def reset_cancelled():
-    global transactions
-    transactions = [tx for tx in transactions if tx.get("status") != "cancelled"]
-    log_with_time("[RESET CANCELLED] All cancelled orders removed")
-    save_transactions()
-    return jsonify({"status": "success"}), 200
-
-# -------------------- Webhook --------------------
+# -------------------- Webhook TrueWallet --------------------
 @app.route("/truewallet/webhook", methods=["POST"])
 def webhook():
     try:
@@ -170,10 +134,12 @@ def webhook():
             log_with_time("[WEBHOOK ERROR] No JSON received")
             return jsonify({"status":"error","message":"No JSON received"}), 400
 
-        token = data.get("token")
-        if token:
+        # Decode JWT message หากมี
+        message_jwt = data.get("message")
+        decoded = {}
+        if message_jwt:
             try:
-                decoded = jwt.decode(token, SECRET_KEY, algorithms=["HS256"], options={"verify_iat": False})
+                decoded = jwt.decode(message_jwt, SECRET_KEY, algorithms=["HS256"])
             except Exception as e:
                 log_with_time("[JWT ERROR]", str(e))
                 return jsonify({"status":"error","message":"Invalid JWT"}), 400
@@ -185,35 +151,25 @@ def webhook():
         if any(tx["id"] == txid for tx in transactions):
             return jsonify({"status":"success","message":"Transaction exists"}), 200
 
-        # จำนวนเงิน
-        amount = 0
-        for k in ["amount","total_amount","amount_str"]:
-            if k in decoded:
-                try:
-                    amount = float(decoded[k])
-                    break
-                except:
-                    continue
+        # จำนวนเงิน (แปลงจากสตางค์เป็นบาท)
+        amount = int(decoded.get("amount",0))
 
         # ชื่อ / เบอร์
-        sender_name = decoded.get("sender_name") or decoded.get("name") or "-"
-        sender_mobile = decoded.get("sender_mobile") or decoded.get("mobile") or "-"
+        sender_name = decoded.get("sender_name","-")
+        sender_mobile = decoded.get("sender_mobile","-")
         name = f"{sender_name} / {sender_mobile}" if sender_mobile else sender_name
 
-        # ธนาคาร
-        bank_code = (decoded.get("channel") or decoded.get("bank_code") or "-").upper()
+        # ธนาคาร / ช่องทาง
+        bank_code = (decoded.get("channel") or "-").upper()
         bank_name_th = BANK_MAP_TH.get(bank_code, bank_code)
 
         # ประเภท event
         event_type = decoded.get("event_type","ฝาก")
 
-        # เวลา: ใช้เวลาจริง +7 ชั่วโมงสำหรับหน้าเว็บ
-        time_str = decoded.get("created_at") or decoded.get("time") or ""
+        # เวลา received_time ของ TrueWallet
+        time_str = decoded.get("received_time") or datetime.now().isoformat()
         try:
-            if "T" in time_str:
-                tx_time = datetime.strptime(time_str, "%Y-%m-%dT%H:%M:%S")
-            else:
-                tx_time = datetime.strptime(time_str, "%Y-%m-%d %H:%M:%S")
+            tx_time = datetime.strptime(time_str[:19], "%Y-%m-%dT%H:%M:%S")
         except:
             tx_time = datetime.now()
 
