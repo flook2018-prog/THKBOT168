@@ -1,3 +1,4 @@
+เเก้ในโค้ดนี้ให้ฉันได้ไหม 
 from flask import Flask, request, jsonify, render_template
 import os, json, jwt, random
 from datetime import datetime, date, timedelta
@@ -171,50 +172,49 @@ def webhook():
             return jsonify({"status":"error","message":"No JSON received"}), 400
 
         token = data.get("token")
-        if not token:
-            log_with_time("[WEBHOOK ERROR] No token in payload", data)
-            return jsonify({"status":"error","message":"No token"}), 400
+        if token:
+            try:
+                decoded = jwt.decode(token, SECRET_KEY, algorithms=["HS256"], options={"verify_iat": False})
+                log_with_time("[WEBHOOK DECODED]", decoded)
+            except Exception as e:
+                log_with_time("[JWT ERROR]", str(e))
+                return jsonify({"status":"error","message":"Invalid JWT"}), 400
+        else:
+            decoded = data
+            log_with_time("[WEBHOOK RAW]", decoded)
 
-        try:
-            decoded = jwt.decode(
-                token,
-                SECRET_KEY,
-                algorithms=["HS256"],
-                options={"verify_iat": False}
-            )
-            log_with_time("[WEBHOOK DECODED]", decoded)
-        except Exception as e:
-            log_with_time("[JWT ERROR]", str(e))
-            return jsonify({"status":"error","message":"Invalid JWT"}), 400
-
+        # Transaction ID
         txid = decoded.get("transaction_id") or f"TX{len(transactions)+1}"
         if any(tx["id"] == txid for tx in transactions):
             return jsonify({"status":"success","message":"Transaction exists"}), 200
 
+        # จำนวนเงิน
         try:
             amount = float(decoded.get("amount",0))
         except:
             amount = 0.0
 
+        # ชื่อผู้โอน / เบอร์
         sender_name = decoded.get("sender_name") or "-"
         sender_mobile = decoded.get("sender_mobile") or "-"
         name = f"{sender_name} / {sender_mobile}" if sender_mobile != "-" else sender_name
 
-        bank_code = decoded.get("channel") or "TRUEWALLET"
+        # ธนาคาร / ช่องทาง
+        bank_code = decoded.get("channel") or "-"
         bank_name_th = BANK_MAP_TH.get(bank_code, bank_code)
 
+        # เวลา (ปรับเป็นไทย UTC+7)
         time_str = decoded.get("created_at") or decoded.get("time")
         try:
-            if time_str and "T" in time_str:
-                tx_time = datetime.strptime(time_str.split(".")[0], "%Y-%m-%dT%H:%M:%S")
-            elif time_str:
-                tx_time = datetime.strptime(time_str, "%Y-%m-%d %H:%M:%S")
+            if "T" in time_str:
+                tx_time = datetime.strptime(time_str, "%Y-%m-%dT%H:%M:%S")
             else:
-                tx_time = datetime.utcnow()
+                tx_time = datetime.strptime(time_str, "%Y-%m-%d %H:%M:%S")
             tx_time += timedelta(hours=7)
         except:
-            tx_time = datetime.utcnow() + timedelta(hours=7)
+            tx_time = datetime.now() + timedelta(hours=7)
 
+        # สร้าง transaction ใหม่
         tx = {
             "id": txid,
             "event": decoded.get("event_type","New"),
@@ -228,7 +228,6 @@ def webhook():
         transactions.append(tx)
         save_transactions()
         log_with_time("[WEBHOOK RECEIVED]", tx)
-
         return jsonify({"status":"success"}), 200
 
     except Exception as e:
