@@ -82,9 +82,9 @@ def get_transactions():
     for tx in new_orders + approved_orders + cancelled_orders:
         tx["time_str"] = tx["time"].strftime("%Y-%m-%d %H:%M:%S")
         tx["amount_str"] = f"{tx['amount']:,.2f}"
-        tx["name"] = tx.get("name","-")
+        tx["name_mobile"] = f"{tx.get('name','-')} / {tx.get('mobile','-')}"
+        tx["type"] = tx.get("type", "Unknown")
         tx["bank"] = BANK_MAP_TH.get(tx.get("bank","-"), tx.get("bank","-"))
-        tx["customer_user"] = tx.get("customer_user","-")
 
     daily_list = [{"date": d, "total": f"{v:,.2f}"} for d, v in sorted(daily_summary_history.items())]
 
@@ -127,6 +127,7 @@ def webhook():
             decoded = data
             log_with_time("[WEBHOOK RAW NO TOKEN]", json.dumps(decoded, ensure_ascii=False))
 
+        # ---------------- Mapping ฟิลด์ ----------------
         txid = decoded.get("transaction_id") or f"TX{len(transactions)+1}"
         if any(tx["id"] == txid for tx in transactions):
             return jsonify({"status": "success", "message": "Transaction exists"}), 200
@@ -135,10 +136,9 @@ def webhook():
         amount = float(decoded.get("amount", 0) or decoded.get("total", 0))
         sender_name = decoded.get("sender_name") or decoded.get("owner_name") or "-"
         sender_mobile = decoded.get("sender_mobile") or decoded.get("owner_mobile") or "-"
-        name = f"{sender_name} / {sender_mobile}" if sender_mobile else sender_name
         bank_code = decoded.get("channel") or decoded.get("bank") or "TRUEWALLET"
-        bank_name_th = BANK_MAP_TH.get(bank_code, bank_code)
 
+        # เวลา +7 ชั่วโมง
         time_str = decoded.get("created_at") or decoded.get("time")
         try:
             if time_str and "T" in time_str:
@@ -147,17 +147,19 @@ def webhook():
                 tx_time = datetime.strptime(time_str, "%Y-%m-%d %H:%M:%S")
             else:
                 tx_time = datetime.now()
-            tx_time += timedelta(hours=7)  # ✅ เวลาไทย
+            tx_time += timedelta(hours=7)
         except Exception as e:
             log_with_time("[TIME PARSE ERROR]", str(e))
             tx_time = datetime.now()
 
+        # ---------------- สร้าง transaction ----------------
         tx = {
             "id": txid,
-            "event": event,
+            "type": event,
             "amount": amount,
-            "name": name,
-            "bank": bank_name_th,
+            "name": sender_name,
+            "mobile": sender_mobile,
+            "bank": BANK_MAP_TH.get(bank_code, bank_code),
             "status": "new",
             "time": tx_time
         }
