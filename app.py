@@ -55,25 +55,33 @@ def index():
 
 @app.route("/get_transactions")
 def get_transactions():
-    today_str = date.today().strftime("%Y-%m-%d")
-    today_transactions = [tx for tx in transactions if tx["time"].strftime("%Y-%m-%d") == today_str]
+    # เวลาไทยสำหรับวันนี้
+    today_str = (datetime.utcnow() + timedelta(hours=7)).strftime("%Y-%m-%d")
+    
+    today_transactions = []
+    for tx in transactions:
+        display_time = tx["time"] + timedelta(hours=7)  # เวลาที่จะแสดง
+        tx["_display_time"] = display_time
+        if display_time.strftime("%Y-%m-%d") == today_str:
+            today_transactions.append(tx)
 
-    new_orders = [tx for tx in today_transactions if tx["status"] == "new"][-20:][::-1]
-    approved_orders = [tx for tx in today_transactions if tx["status"] == "approved"][-20:][::-1]
-    cancelled_orders = [tx for tx in today_transactions if tx["status"] == "cancelled"][-20:][::-1]
+    new_orders = [tx for tx in today_transactions if tx["status"] == "new"][::-1]
+    approved_orders = [tx for tx in today_transactions if tx["status"] == "approved"][::-1]
+    cancelled_orders = [tx for tx in today_transactions if tx["status"] == "cancelled"][::-1]
 
     wallet_daily_total = sum(tx["amount"] for tx in approved_orders)
     wallet_daily_total_str = f"{wallet_daily_total:,.2f}"
 
-    # แปลงเวลาเพื่อแสดงบนเว็บ (-7 ชั่วโมง) เท่านั้น
+    # แปลงเวลา +7 ชั่วโมง สำหรับแสดงบนเว็บ
     for tx in new_orders + approved_orders + cancelled_orders:
-        tx["time_str"] = (tx["time"] - timedelta(hours=7)).strftime("%Y-%m-%d %H:%M:%S")
+        display_time = tx["_display_time"]
+        tx["time_str"] = display_time.strftime("%Y-%m-%d %H:%M:%S")
         tx["amount_str"] = f"{tx['amount']:,.2f}"
         tx["name"] = tx.get("name","-")
         tx["bank"] = BANK_MAP_TH.get(tx.get("bank","-"), tx.get("bank","-"))
         tx["customer_user"] = tx.get("customer_user","-")
-        tx["approved_time_str"] = (tx.get("approved_time") - timedelta(hours=7)).strftime("%Y-%m-%d %H:%M:%S") if tx.get("approved_time") else "-"
-        tx["cancelled_time_str"] = (tx.get("cancelled_time") - timedelta(hours=7)).strftime("%Y-%m-%d %H:%M:%S") if tx.get("cancelled_time") else "-"
+        tx["approved_time_str"] = (tx.get("approved_time") + timedelta(hours=7)).strftime("%Y-%m-%d %H:%M:%S") if tx.get("approved_time") else "-"
+        tx["cancelled_time_str"] = (tx.get("cancelled_time") + timedelta(hours=7)).strftime("%Y-%m-%d %H:%M:%S") if tx.get("cancelled_time") else "-"
 
     daily_list = [{"date": d, "total": f"{v:,.2f}"} for d, v in sorted(daily_summary_history.items())]
 
@@ -200,7 +208,7 @@ def webhook():
                 tx_time = datetime.strptime(time_str, "%Y-%m-%dT%H:%M:%S")
             else:
                 tx_time = datetime.strptime(time_str, "%Y-%m-%d %H:%M:%S")
-            # เก็บข้อมูลจริงตามดิบ (ไม่แก้)
+            # เก็บเวลาตาม server ไม่บวกเวลา
         except:
             tx_time = datetime.now()
 
@@ -213,7 +221,7 @@ def webhook():
             "bank": bank_name_th,
             "status": "new",
             "time": tx_time,
-            "time_str": tx_time.strftime("%Y-%m-%d %H:%M:%S")
+            "time_str": (tx_time + timedelta(hours=7)).strftime("%Y-%m-%d %H:%M:%S")  # แสดง +7 ชั่วโมงบนเว็บ
         }
 
         transactions.append(tx)
