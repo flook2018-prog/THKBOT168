@@ -99,7 +99,7 @@ def approve():
         if tx["id"] == txid:
             tx["status"] = "approved"
             tx["approver_name"] = approver_name
-            tx["approved_time"] = datetime.now()
+            tx["approved_time"] = datetime.now() + timedelta(hours=7)  # เวลาไทย
             tx["customer_user"] = customer_user
             day = tx["time"].strftime("%Y-%m-%d")
             daily_summary_history[day] += tx["amount"]
@@ -119,7 +119,7 @@ def cancel():
     for tx in transactions:
         if tx["id"] == txid and tx["status"] == "new":
             tx["status"] = "cancelled"
-            tx["cancelled_time"] = datetime.now()
+            tx["cancelled_time"] = datetime.now() + timedelta(hours=7)  # เวลาไทย
             tx["canceler_name"] = canceler_name
             log_with_time(f"[CANCELLED] {txid} by {canceler_name} ({user_ip})")
             break
@@ -182,53 +182,43 @@ def webhook():
             decoded = data
             log_with_time("[WEBHOOK RAW]", decoded)
 
-        # Transaction ID
         txid = decoded.get("transaction_id") or f"TX{len(transactions)+1}"
         if any(tx["id"] == txid for tx in transactions):
             return jsonify({"status":"success","message":"Transaction exists"}), 200
 
-        # จำนวนเงิน
-        try:
-            amount = float(decoded.get("amount",0))
-        except:
-            amount = 0.0
-
-        # ชื่อผู้โอน / เบอร์
-        sender_name = decoded.get("sender_name") or "-"
-        sender_mobile = decoded.get("sender_mobile") or "-"
-        name = f"{sender_name} / {sender_mobile}" if sender_mobile != "-" else sender_name
-
-        # ธนาคาร / ช่องทาง
-        bank_code = decoded.get("channel") or "-"
+        amount = float(decoded.get("amount",0))
+        sender_name = decoded.get("sender_name","-")
+        sender_mobile = decoded.get("sender_mobile","-")
+        name = f"{sender_name} / {sender_mobile}" if sender_mobile else sender_name
+        bank_code = decoded.get("channel","-")
         bank_name_th = BANK_MAP_TH.get(bank_code, bank_code)
 
-        # เวลา (ปรับเป็นไทย UTC+7)
+        # แปลงเวลาเป็นไทย (+7)
         time_str = decoded.get("created_at") or decoded.get("time")
         try:
             if "T" in time_str:
                 tx_time = datetime.strptime(time_str, "%Y-%m-%dT%H:%M:%S")
             else:
                 tx_time = datetime.strptime(time_str, "%Y-%m-%d %H:%M:%S")
-            tx_time += timedelta(hours=7)
+            tx_time += timedelta(hours=7)  # เวลาไทย
         except:
             tx_time = datetime.now() + timedelta(hours=7)
 
-        # สร้าง transaction ใหม่
         tx = {
             "id": txid,
-            "event": decoded.get("event_type","New"),
+            "event": decoded.get("event_type","Unknown"),
             "amount": amount,
             "name": name,
             "bank": bank_name_th,
             "status": "new",
-            "time": tx_time
+            "time": tx_time,
+            "customer_user": decoded.get("customer_user","-")
         }
 
         transactions.append(tx)
         save_transactions()
         log_with_time("[WEBHOOK RECEIVED]", tx)
         return jsonify({"status":"success"}), 200
-
     except Exception as e:
         log_with_time("[WEBHOOK ERROR]", str(e))
         return jsonify({"status":"error","message": str(e)}), 500
