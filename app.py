@@ -34,11 +34,7 @@ if os.path.exists(DATA_FILE):
 
 def save_transactions():
     with open(DATA_FILE, "w", encoding="utf-8") as f:
-        json.dump([{**tx,
-                    "time": tx["time"].strftime("%Y-%m-%d %H:%M:%S"),
-                    "approved_time": tx.get("approved_time").strftime("%Y-%m-%d %H:%M:%S") if tx.get("approved_time") else None,
-                    "cancelled_time": tx.get("cancelled_time").strftime("%Y-%m-%d %H:%M:%S") if tx.get("cancelled_time") else None
-                    } for tx in transactions], f, ensure_ascii=False, indent=2)
+        json.dump([{**tx, "time": tx["time"].strftime("%Y-%m-%d %H:%M:%S")} for tx in transactions], f, ensure_ascii=False, indent=2)
 
 def log_with_time(*args):
     ts = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
@@ -70,15 +66,13 @@ def get_transactions():
     wallet_daily_total_str = f"{wallet_daily_total:,.2f}"
 
     for tx in new_orders + approved_orders + cancelled_orders:
-        tx["amount_str"] = f"{tx['amount']:,.2f}"
         tx["time_str"] = tx["time"].strftime("%Y-%m-%d %H:%M:%S")
-        tx["name_mobile"] = tx.get("name_mobile", "- / -")
-        tx["type"] = tx.get("type", "Unknown")
+        tx["amount_str"] = f"{tx['amount']:,.2f}"
+        tx["name"] = tx.get("name_mobile","-")
         tx["bank"] = BANK_MAP_TH.get(tx.get("bank","-"), tx.get("bank","-"))
-        if tx.get("status") == "approved":
-            tx["approved_time_str"] = tx.get("approved_time").strftime("%Y-%m-%d %H:%M:%S") if tx.get("approved_time") else "-"
-        if tx.get("status") == "cancelled":
-            tx["cancelled_time_str"] = tx.get("cancelled_time").strftime("%Y-%m-%d %H:%M:%S") if tx.get("cancelled_time") else "-"
+        tx["customer_user"] = tx.get("customer_user","-")
+        tx["approved_time_str"] = tx.get("approved_time").strftime("%Y-%m-%d %H:%M:%S") if tx.get("approved_time") else "-"
+        tx["cancelled_time_str"] = tx.get("cancelled_time").strftime("%Y-%m-%d %H:%M:%S") if tx.get("cancelled_time") else "-"
 
     daily_list = [{"date": d, "total": f"{v:,.2f}"} for d, v in sorted(daily_summary_history.items())]
 
@@ -191,14 +185,17 @@ def webhook():
         if any(tx["id"] == txid for tx in transactions):
             return jsonify({"status":"success","message":"Transaction exists"}), 200
 
+        # ===== แก้ไข mapping ฟิลด์ทั้งหมด =====
         amount = float(decoded.get("amount",0))
-        sender_name = decoded.get("sender_name","-")
-        sender_mobile = decoded.get("sender_mobile","-")
-        name_mobile = f"{sender_name} / {sender_mobile}" if sender_mobile else sender_name
-        bank_code = decoded.get("channel","-")
-        bank_name_th = BANK_MAP_TH.get(bank_code, bank_code)
+        sender_name = decoded.get("sender_name") or "-"
+        sender_mobile = decoded.get("sender_mobile") or "-"
+        bank_code = decoded.get("channel") or "-"
+        bank_name_th = BANK_MAP_TH.get(bank_code.upper(), bank_code)
 
-        time_str = decoded.get("created_at") or decoded.get("time")
+        event_type = decoded.get("event_type") or "Unknown"
+        tx_type = "ฝาก" if event_type.lower() == "deposit" else "ถอน" if event_type.lower() == "withdraw" else "Unknown"
+
+        time_str = decoded.get("created_at") or decoded.get("time") or datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         try:
             if "T" in time_str:
                 tx_time = datetime.strptime(time_str, "%Y-%m-%dT%H:%M:%S")
@@ -208,15 +205,13 @@ def webhook():
         except:
             tx_time = datetime.now()
 
-        tx_type = "ฝาก" if decoded.get("event_type","").lower()=="deposit" else "ถอน" if decoded.get("event_type","").lower()=="withdraw" else "Unknown"
-
         tx = {
             "id": txid,
-            "event": decoded.get("event_type","Unknown"),
+            "event": event_type,
             "type": tx_type,
             "amount": amount,
             "amount_str": f"{amount:,.2f}",
-            "name_mobile": name_mobile,
+            "name_mobile": f"{sender_name} / {sender_mobile}" if sender_mobile else sender_name,
             "bank": bank_name_th,
             "status": "new",
             "time": tx_time,
@@ -227,6 +222,7 @@ def webhook():
         save_transactions()
         log_with_time("[WEBHOOK RECEIVED]", tx)
         return jsonify({"status":"success"}), 200
+
     except Exception as e:
         log_with_time("[WEBHOOK ERROR]", str(e))
         return jsonify({"status":"error","message": str(e)}), 500
