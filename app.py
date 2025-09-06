@@ -22,7 +22,7 @@ BANK_MAP_TH = {
     "TRUEWALLET": "True Wallet",
 }
 
-# ------------------- ใช้ SECRET_KEY -------------------
+# ------------------- ใช้ SECRET_KEY ฟิก -------------------
 SECRET_KEY = "f557ff6589e6d075581d68df1d4f3af7"
 
 # โหลดธุรกรรมเก่า
@@ -37,10 +37,7 @@ if os.path.exists(DATA_FILE):
 
 def save_transactions():
     with open(DATA_FILE, "w", encoding="utf-8") as f:
-        json.dump(
-            [{**tx, "time": tx["time"].strftime("%Y-%m-%d %H:%M:%S")} for tx in transactions],
-            f, ensure_ascii=False, indent=2
-        )
+        json.dump([{**tx, "time": tx["time"].strftime("%Y-%m-%d %H:%M:%S")} for tx in transactions], f, ensure_ascii=False, indent=2)
 
 def log_with_time(*args):
     ts = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
@@ -88,6 +85,82 @@ def get_transactions():
         "daily_summary": daily_list
     })
 
+# -------------------- Approve / Cancel / Restore / Reset --------------------
+@app.route("/approve", methods=["POST"])
+def approve():
+    txid = request.json.get("id")
+    customer_user = request.json.get("customer_user")
+    user_ip = request.remote_addr or "unknown"
+    if user_ip not in ip_approver_map:
+        ip_approver_map[user_ip] = random_english_name()
+    approver_name = ip_approver_map[user_ip]
+
+    for tx in transactions:
+        if tx["id"] == txid:
+            tx["status"] = "approved"
+            tx["approver_name"] = approver_name
+            tx["approved_time"] = datetime.now()
+            tx["customer_user"] = customer_user
+            day = tx["time"].strftime("%Y-%m-%d")
+            daily_summary_history[day] += tx["amount"]
+            log_with_time(f"[APPROVED] {txid} by {approver_name} ({user_ip}) for customer {customer_user}")
+            break
+    save_transactions()
+    return jsonify({"status": "success"}), 200
+
+@app.route("/cancel", methods=["POST"])
+def cancel():
+    txid = request.json.get("id")
+    user_ip = request.remote_addr or "unknown"
+    if user_ip not in ip_approver_map:
+        ip_approver_map[user_ip] = random_english_name()
+    canceler_name = ip_approver_map[user_ip]
+
+    for tx in transactions:
+        if tx["id"] == txid and tx["status"] == "new":
+            tx["status"] = "cancelled"
+            tx["cancelled_time"] = datetime.now()
+            tx["canceler_name"] = canceler_name
+            log_with_time(f"[CANCELLED] {txid} by {canceler_name} ({user_ip})")
+            break
+    save_transactions()
+    return jsonify({"status": "success"}), 200
+
+@app.route("/restore", methods=["POST"])
+def restore():
+    txid = request.json.get("id")
+    for tx in transactions:
+        if tx["id"] == txid and tx["status"] in ["approved","cancelled"]:
+            if tx["status"] == "approved":
+                day = tx["time"].strftime("%Y-%m-%d")
+                daily_summary_history[day] -= tx["amount"]
+            tx["status"] = "new"
+            tx.pop("approver_name", None)
+            tx.pop("approved_time", None)
+            tx.pop("cancelled_time", None)
+            tx.pop("customer_user", None)
+            tx.pop("canceler_name", None)
+            log_with_time(f"[RESTORED] {txid} -> new")
+            break
+    save_transactions()
+    return jsonify({"status": "success"}), 200
+
+@app.route("/reset_approved", methods=["POST"])
+def reset_approved():
+    global transactions
+    transactions = [tx for tx in transactions if tx.get("status") != "approved"]
+    log_with_time("[RESET APPROVED] All approved orders removed")
+    save_transactions()
+    return jsonify({"status": "success"}), 200
+
+@app.route("/reset_cancelled", methods=["POST"])
+def reset_cancelled():
+    global transactions
+    transactions = [tx for tx in transactions if tx.get("status") != "cancelled"]
+    log_with_time("[RESET CANCELLED] All cancelled orders removed")
+    save_transactions()
+    return jsonify({"status": "success"}), 200
+
 # -------------------- Webhook --------------------
 @app.route("/truewallet/webhook", methods=["POST"])
 def webhook():
@@ -98,38 +171,38 @@ def webhook():
             return jsonify({"status":"error","message":"No JSON received"}), 400
 
         token = data.get("token")
-        if token:
-            try:
-                decoded = jwt.decode(token, SECRET_KEY, algorithms=["HS256"], options={"verify_iat": False})
-                log_with_time("[WEBHOOK DECODED]", decoded)
-            except Exception as e:
-                log_with_time("[JWT ERROR]", str(e))
-                return jsonify({"status":"error","message":"Invalid JWT"}), 400
-        else:
-            decoded = data
-            log_with_time("[WEBHOOK RAW]", decoded)
+        if not token:
+            log_with_time("[WEBHOOK ERROR] No token in payload", data)
+            return jsonify({"status":"error","message":"No token"}), 400
 
-        # Transaction ID
+        try:
+            decoded = jwt.decode(
+                token,
+                SECRET_KEY,
+                algorithms=["HS256"],
+                options={"verify_iat": False}
+            )
+            log_with_time("[WEBHOOK DECODED]", decoded)
+        except Exception as e:
+            log_with_time("[JWT ERROR]", str(e))
+            return jsonify({"status":"error","message":"Invalid JWT"}), 400
+
         txid = decoded.get("transaction_id") or f"TX{len(transactions)+1}"
         if any(tx["id"] == txid for tx in transactions):
             return jsonify({"status":"success","message":"Transaction exists"}), 200
 
-        # จำนวนเงิน
         try:
-            amount = float(decoded.get("amount") or decoded.get("amt") or 0)
+            amount = float(decoded.get("amount",0))
         except:
             amount = 0.0
 
-        # ผู้โอน
         sender_name = decoded.get("sender_name") or "-"
-        sender_mobile = decoded.get("sender_mobile") or decoded.get("mobile") or "-"
+        sender_mobile = decoded.get("sender_mobile") or "-"
         name = f"{sender_name} / {sender_mobile}" if sender_mobile != "-" else sender_name
 
-        # ธนาคาร/ช่องทาง
-        bank_code = decoded.get("channel") or decoded.get("bank_code") or "-"
+        bank_code = decoded.get("channel") or "TRUEWALLET"
         bank_name_th = BANK_MAP_TH.get(bank_code, bank_code)
 
-        # เวลา (UTC+7)
         time_str = decoded.get("created_at") or decoded.get("time")
         try:
             if time_str and "T" in time_str:
@@ -139,11 +212,9 @@ def webhook():
             else:
                 tx_time = datetime.utcnow()
             tx_time += timedelta(hours=7)
-        except Exception as e:
-            log_with_time("[TIME PARSE ERROR]", str(e))
+        except:
             tx_time = datetime.utcnow() + timedelta(hours=7)
 
-        # สร้าง transaction ใหม่
         tx = {
             "id": txid,
             "event": decoded.get("event_type","New"),
@@ -157,6 +228,7 @@ def webhook():
         transactions.append(tx)
         save_transactions()
         log_with_time("[WEBHOOK RECEIVED]", tx)
+
         return jsonify({"status":"success"}), 200
 
     except Exception as e:
