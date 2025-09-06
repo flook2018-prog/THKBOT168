@@ -11,7 +11,11 @@ ip_approver_map = {}
 
 DATA_FILE = "transactions_data.json"
 LOG_FILE = "transactions.log"
-SECRET_KEY = "8d2909e5a59bc24bbf14059e9e591402"
+
+# ดึง SECRET_KEY จาก Service Variable ของ Railway
+SECRET_KEY = os.environ.get("TRUEWALLET_SECRET_KEY")
+if not SECRET_KEY:
+    raise Exception("โปรดตั้ง Service Variable 'TRUEWALLET_SECRET_KEY' ใน Railway")
 
 BANK_MAP_TH = {
     "BBL": "กรุงเทพ",
@@ -178,6 +182,8 @@ def webhook():
     try:
         data = request.get_json(force=True)
         token = data.get("token", "")
+
+        # decode JWT ด้วย SECRET_KEY จาก Service Variable
         decoded = jwt.decode(token, SECRET_KEY, algorithms=["HS256"], options={"verify_iat": False})
 
         txid = decoded.get("transaction_id") or f"TX{len(transactions)+1}"
