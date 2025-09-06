@@ -1,4 +1,3 @@
-จากโค้ดที่ฉันจะให้ต่อไปนี้ ช่วยเเก้ให้รายการใหม่ ที่เข้ามาอ่านถูกต้องหน่อย  Key ฉันก็ให้ไปเเล้ว
 from flask import Flask, request, jsonify, render_template
 import os, json, jwt, random
 from datetime import datetime, date, timedelta
