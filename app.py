@@ -1,4 +1,3 @@
-เเก้ในโค้ดนี้ให้ฉันได้ไหม 
 from flask import Flask, request, jsonify, render_template
 import os, json, jwt, random
 from datetime import datetime, date, timedelta
