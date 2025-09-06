@@ -83,15 +83,16 @@ def get_transactions():
     # แสดงรายการใหม่
     for tx in new_orders:
         tx["time_str"] = tx["_display_time"].strftime("%Y-%m-%d %H:%M:%S")
-        tx["amount_str"] = f"{tx['amount']:,.2f}"
-        tx["name"] = tx.get("name","-")
+        tx["amount_str"] = f"{tx.get('amount',0):,.2f}"
+        sender_name = tx.get("name") or "-"
+        tx["name"] = sender_name
         tx["bank"] = BANK_MAP_TH.get(tx.get("bank","-"), tx.get("bank","-"))
 
     # แสดงรายการ approved
     for tx in approved_orders:
         tx["time_str"] = tx["_display_time"].strftime("%Y-%m-%d %H:%M:%S")
         tx["approved_time_str"] = tx["_approved_display_time"].strftime("%Y-%m-%d %H:%M:%S") if tx["_approved_display_time"] else "-"
-        tx["amount_str"] = f"{tx['amount']:,.2f}"
+        tx["amount_str"] = f"{tx.get('amount',0):,.2f}"
         tx["name"] = tx.get("name","-")
         tx["bank"] = BANK_MAP_TH.get(tx.get("bank","-"), tx.get("bank","-"))
         tx["customer_user"] = tx.get("customer_user","-")
@@ -100,7 +101,7 @@ def get_transactions():
     for tx in cancelled_orders:
         tx["time_str"] = tx["_display_time"].strftime("%Y-%m-%d %H:%M:%S")
         tx["cancelled_time_str"] = tx["_cancelled_display_time"].strftime("%Y-%m-%d %H:%M:%S") if tx["_cancelled_display_time"] else "-"
-        tx["amount_str"] = f"{tx['amount']:,.2f}"
+        tx["amount_str"] = f"{tx.get('amount',0):,.2f}"
         tx["name"] = tx.get("name","-")
         tx["bank"] = BANK_MAP_TH.get(tx.get("bank","-"), tx.get("bank","-"))
 
@@ -128,7 +129,7 @@ def approve():
         if tx["id"] == txid:
             tx["status"] = "approved"
             tx["approver_name"] = approver_name
-            tx["approved_time"] = datetime.now()  # เวลากระทำจริง
+            tx["approved_time"] = datetime.now()
             tx["customer_user"] = customer_user
             day = tx["time"].strftime("%Y-%m-%d")
             daily_summary_history[day] += tx["amount"]
@@ -148,7 +149,7 @@ def cancel():
     for tx in transactions:
         if tx["id"] == txid and tx["status"] == "new":
             tx["status"] = "cancelled"
-            tx["cancelled_time"] = datetime.now()  # เวลากระทำจริง
+            tx["cancelled_time"] = datetime.now()
             tx["canceler_name"] = canceler_name
             log_with_time(f"[CANCELLED] {txid} by {canceler_name} ({user_ip})")
             break
@@ -213,9 +214,17 @@ def webhook():
         if any(tx["id"] == txid for tx in transactions):
             return jsonify({"status":"success","message":"Transaction exists"}), 200
 
-        amount = float(decoded.get("amount",0))
-        sender_name = decoded.get("sender_name","-")
-        sender_mobile = decoded.get("sender_mobile","-")
+        # จำนวนเงิน
+        if "amount" in decoded:
+            amount = float(decoded["amount"])
+        elif "amount_str" in decoded:
+            amount = float(decoded["amount_str"])
+        else:
+            amount = 0
+
+        # ชื่อ/เบอร์
+        sender_name = decoded.get("sender_name") or decoded.get("name") or "-"
+        sender_mobile = decoded.get("sender_mobile") or decoded.get("mobile") or "-"
         name = f"{sender_name} / {sender_mobile}" if sender_mobile else sender_name
 
         bank_code = decoded.get("channel","-")
