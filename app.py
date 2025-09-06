@@ -29,24 +29,12 @@ if os.path.exists(DATA_FILE):
             transactions = json.load(f)
             for tx in transactions:
                 tx["time"] = datetime.strptime(tx["time"], "%Y-%m-%d %H:%M:%S")
-                if tx.get("approved_time"):
-                    tx["approved_time"] = datetime.strptime(tx["approved_time"], "%Y-%m-%d %H:%M:%S")
-                if tx.get("cancelled_time"):
-                    tx["cancelled_time"] = datetime.strptime(tx["cancelled_time"], "%Y-%m-%d %H:%M:%S")
         except:
             transactions = []
 
 def save_transactions():
-    def serialize_tx(tx):
-        d = tx.copy()
-        d["time"] = d["time"].strftime("%Y-%m-%d %H:%M:%S")
-        if d.get("approved_time"):
-            d["approved_time"] = d["approved_time"].strftime("%Y-%m-%d %H:%M:%S")
-        if d.get("cancelled_time"):
-            d["cancelled_time"] = d["cancelled_time"].strftime("%Y-%m-%d %H:%M:%S")
-        return d
     with open(DATA_FILE, "w", encoding="utf-8") as f:
-        json.dump([serialize_tx(tx) for tx in transactions], f, ensure_ascii=False, indent=2)
+        json.dump([{**tx, "time": tx["time"].strftime("%Y-%m-%d %H:%M:%S")} for tx in transactions], f, ensure_ascii=False, indent=2)
 
 def log_with_time(*args):
     ts = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
@@ -67,39 +55,25 @@ def index():
 
 @app.route("/get_transactions")
 def get_transactions():
-    # เตรียมเวลา +7 สำหรับเว็บ
-    for tx in transactions:
-        tx["_display_time"] = tx["time"] + timedelta(hours=7)
-        tx["_approved_display_time"] = tx.get("approved_time") + timedelta(hours=7) if tx.get("approved_time") else None
-        tx["_cancelled_display_time"] = tx.get("cancelled_time") + timedelta(hours=7) if tx.get("cancelled_time") else None
+    today_str = date.today().strftime("%Y-%m-%d")
+    today_transactions = [tx for tx in transactions if tx["time"].strftime("%Y-%m-%d") == today_str]
 
-    new_orders = [tx for tx in transactions if tx["status"] == "new"][::-1]
-    approved_orders = [tx for tx in transactions if tx["status"] == "approved"][::-1]
-    cancelled_orders = [tx for tx in transactions if tx["status"] == "cancelled"][::-1]
+    new_orders = [tx for tx in today_transactions if tx["status"] == "new"][-20:][::-1]
+    approved_orders = [tx for tx in today_transactions if tx["status"] == "approved"][-20:][::-1]
+    cancelled_orders = [tx for tx in today_transactions if tx["status"] == "cancelled"][-20:][::-1]
 
     wallet_daily_total = sum(tx["amount"] for tx in approved_orders)
     wallet_daily_total_str = f"{wallet_daily_total:,.2f}"
 
-    for tx in new_orders:
-        tx["time_str"] = tx["_display_time"].strftime("%Y-%m-%d %H:%M:%S")
-        tx["amount_str"] = f"{tx.get('amount',0):,.2f}"
-        tx["name"] = tx.get("name","-")
-        tx["bank"] = BANK_MAP_TH.get(tx.get("bank","-"), tx.get("bank","-"))
-
-    for tx in approved_orders:
-        tx["time_str"] = tx["_display_time"].strftime("%Y-%m-%d %H:%M:%S")
-        tx["approved_time_str"] = tx["_approved_display_time"].strftime("%Y-%m-%d %H:%M:%S") if tx["_approved_display_time"] else "-"
-        tx["amount_str"] = f"{tx.get('amount',0):,.2f}"
+    # เตรียมเวลาแสดง +7 ชั่วโมงสำหรับหน้าเว็บ
+    for tx in new_orders + approved_orders + cancelled_orders:
+        tx["time_str"] = (tx["time"] + timedelta(hours=7)).strftime("%Y-%m-%d %H:%M:%S")
+        tx["amount_str"] = f"{tx['amount']:,.2f}"
         tx["name"] = tx.get("name","-")
         tx["bank"] = BANK_MAP_TH.get(tx.get("bank","-"), tx.get("bank","-"))
         tx["customer_user"] = tx.get("customer_user","-")
-
-    for tx in cancelled_orders:
-        tx["time_str"] = tx["_display_time"].strftime("%Y-%m-%d %H:%M:%S")
-        tx["cancelled_time_str"] = tx["_cancelled_display_time"].strftime("%Y-%m-%d %H:%M:%S") if tx["_cancelled_display_time"] else "-"
-        tx["amount_str"] = f"{tx.get('amount',0):,.2f}"
-        tx["name"] = tx.get("name","-")
-        tx["bank"] = BANK_MAP_TH.get(tx.get("bank","-"), tx.get("bank","-"))
+        tx["approved_time_str"] = (tx["approved_time"] + timedelta(hours=7)).strftime("%Y-%m-%d %H:%M:%S") if tx.get("approved_time") else "-"
+        tx["cancelled_time_str"] = (tx["cancelled_time"] + timedelta(hours=7)).strftime("%Y-%m-%d %H:%M:%S") if tx.get("cancelled_time") else "-"
 
     daily_list = [{"date": d, "total": f"{v:,.2f}"} for d, v in sorted(daily_summary_history.items())]
 
@@ -206,13 +180,14 @@ def webhook():
         else:
             decoded = data
 
+        # Transaction ID
         txid = decoded.get("transaction_id") or f"TX{len(transactions)+1}"
         if any(tx["id"] == txid for tx in transactions):
             return jsonify({"status":"success","message":"Transaction exists"}), 200
 
         # จำนวนเงิน
         amount = 0
-        for k in ["amount","amount_str","total_amount"]:
+        for k in ["amount","total_amount","amount_str"]:
             if k in decoded:
                 try:
                     amount = float(decoded[k])
@@ -220,7 +195,7 @@ def webhook():
                 except:
                     continue
 
-        # ชื่อ/เบอร์
+        # ชื่อ / เบอร์
         sender_name = decoded.get("sender_name") or decoded.get("name") or "-"
         sender_mobile = decoded.get("sender_mobile") or decoded.get("mobile") or "-"
         name = f"{sender_name} / {sender_mobile}" if sender_mobile else sender_name
@@ -232,7 +207,7 @@ def webhook():
         # ประเภท event
         event_type = decoded.get("event_type","ฝาก")
 
-        # เวลา: ใช้เวลาเว็บ (ไม่แก้ดิบ) +7 ชั่วโมงสำหรับแสดง
+        # เวลา: ใช้เวลาจริง +7 ชั่วโมงสำหรับหน้าเว็บ
         time_str = decoded.get("created_at") or decoded.get("time") or ""
         try:
             if "T" in time_str:
