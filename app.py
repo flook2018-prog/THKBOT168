@@ -29,12 +29,24 @@ if os.path.exists(DATA_FILE):
             transactions = json.load(f)
             for tx in transactions:
                 tx["time"] = datetime.strptime(tx["time"], "%Y-%m-%d %H:%M:%S")
+                if tx.get("approved_time"):
+                    tx["approved_time"] = datetime.strptime(tx["approved_time"], "%Y-%m-%d %H:%M:%S")
+                if tx.get("cancelled_time"):
+                    tx["cancelled_time"] = datetime.strptime(tx["cancelled_time"], "%Y-%m-%d %H:%M:%S")
         except:
             transactions = []
 
 def save_transactions():
+    def serialize_tx(tx):
+        d = tx.copy()
+        d["time"] = d["time"].strftime("%Y-%m-%d %H:%M:%S")
+        if d.get("approved_time"):
+            d["approved_time"] = d["approved_time"].strftime("%Y-%m-%d %H:%M:%S")
+        if d.get("cancelled_time"):
+            d["cancelled_time"] = d["cancelled_time"].strftime("%Y-%m-%d %H:%M:%S")
+        return d
     with open(DATA_FILE, "w", encoding="utf-8") as f:
-        json.dump([{**tx, "time": tx["time"].strftime("%Y-%m-%d %H:%M:%S")} for tx in transactions], f, ensure_ascii=False, indent=2)
+        json.dump([serialize_tx(tx) for tx in transactions], f, ensure_ascii=False, indent=2)
 
 def log_with_time(*args):
     ts = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
@@ -55,11 +67,12 @@ def index():
 
 @app.route("/get_transactions")
 def get_transactions():
-    # เพิ่ม +7 ชั่วโมงเพื่อแสดงเวลาในเว็บ
     for tx in transactions:
+        # เวลาแสดงบนเว็บเป็น +7 ชั่วโมง
         tx["_display_time"] = tx["time"] + timedelta(hours=7)
+        tx["_approved_display_time"] = tx["approved_time"] + timedelta(hours=7) if tx.get("approved_time") else None
+        tx["_cancelled_display_time"] = tx["cancelled_time"] + timedelta(hours=7) if tx.get("cancelled_time") else None
 
-    # แยกรายการตามสถานะ
     new_orders = [tx for tx in transactions if tx["status"] == "new"][::-1]
     approved_orders = [tx for tx in transactions if tx["status"] == "approved"][::-1]
     cancelled_orders = [tx for tx in transactions if tx["status"] == "cancelled"][::-1]
@@ -67,23 +80,29 @@ def get_transactions():
     wallet_daily_total = sum(tx["amount"] for tx in approved_orders)
     wallet_daily_total_str = f"{wallet_daily_total:,.2f}"
 
-    # แปลงเวลา +7 ชั่วโมงสำหรับแสดงบนเว็บ (รายการใหม่)
+    # แสดงรายการใหม่
     for tx in new_orders:
-        display_time = tx["_display_time"]
-        tx["time_str"] = display_time.strftime("%Y-%m-%d %H:%M:%S")
+        tx["time_str"] = tx["_display_time"].strftime("%Y-%m-%d %H:%M:%S")
         tx["amount_str"] = f"{tx['amount']:,.2f}"
         tx["name"] = tx.get("name","-")
         tx["bank"] = BANK_MAP_TH.get(tx.get("bank","-"), tx.get("bank","-"))
 
-    # รายการ approved/cancelled เวลาจะเป็นเวลาที่กระทำจริง
-    for tx in approved_orders + cancelled_orders:
-        tx["time_str"] = tx["time"].strftime("%Y-%m-%d %H:%M:%S")
+    # แสดงรายการ approved
+    for tx in approved_orders:
+        tx["time_str"] = tx["_display_time"].strftime("%Y-%m-%d %H:%M:%S")
+        tx["approved_time_str"] = tx["_approved_display_time"].strftime("%Y-%m-%d %H:%M:%S") if tx["_approved_display_time"] else "-"
         tx["amount_str"] = f"{tx['amount']:,.2f}"
         tx["name"] = tx.get("name","-")
         tx["bank"] = BANK_MAP_TH.get(tx.get("bank","-"), tx.get("bank","-"))
         tx["customer_user"] = tx.get("customer_user","-")
-        tx["approved_time_str"] = tx.get("approved_time").strftime("%Y-%m-%d %H:%M:%S") if tx.get("approved_time") else "-"
-        tx["cancelled_time_str"] = tx.get("cancelled_time").strftime("%Y-%m-%d %H:%M:%S") if tx.get("cancelled_time") else "-"
+
+    # แสดงรายการ cancelled
+    for tx in cancelled_orders:
+        tx["time_str"] = tx["_display_time"].strftime("%Y-%m-%d %H:%M:%S")
+        tx["cancelled_time_str"] = tx["_cancelled_display_time"].strftime("%Y-%m-%d %H:%M:%S") if tx["_cancelled_display_time"] else "-"
+        tx["amount_str"] = f"{tx['amount']:,.2f}"
+        tx["name"] = tx.get("name","-")
+        tx["bank"] = BANK_MAP_TH.get(tx.get("bank","-"), tx.get("bank","-"))
 
     daily_list = [{"date": d, "total": f"{v:,.2f}"} for d, v in sorted(daily_summary_history.items())]
 
@@ -210,7 +229,6 @@ def webhook():
                 tx_time = datetime.strptime(time_str, "%Y-%m-%dT%H:%M:%S")
             else:
                 tx_time = datetime.strptime(time_str, "%Y-%m-%d %H:%M:%S")
-            # เก็บเวลาตาม server ไม่แก้
         except:
             tx_time = datetime.now()
 
