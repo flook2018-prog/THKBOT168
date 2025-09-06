@@ -170,7 +170,12 @@ def webhook():
         token = data.get("token")
         if token:
             try:
-                decoded = jwt.decode(token, SECRET_KEY, algorithms=["HS256"], options={"verify_iat": False})
+                decoded = jwt.decode(
+                    token,
+                    SECRET_KEY,
+                    algorithms=["HS256"],
+                    options={"verify_exp": False, "verify_iat": False}
+                )
                 log_with_time("[WEBHOOK DECODED]", decoded)
             except Exception as e:
                 log_with_time("[JWT ERROR]", str(e))
@@ -192,11 +197,14 @@ def webhook():
 
         time_str = decoded.get("created_at") or decoded.get("time")
         try:
-            if "T" in time_str:
-                tx_time = datetime.strptime(time_str, "%Y-%m-%dT%H:%M:%S")
-            else:
+            if time_str and "T" in time_str:
+                tx_time = datetime.strptime(time_str[:19], "%Y-%m-%dT%H:%M:%S")
+            elif time_str:
                 tx_time = datetime.strptime(time_str, "%Y-%m-%d %H:%M:%S")
-            tx_time -= timedelta(hours=7)
+            else:
+                tx_time = datetime.now()
+            # ✅ แปลงเวลาไทย (+7 ชั่วโมง)
+            tx_time += timedelta(hours=7)
         except:
             tx_time = datetime.now()
 
