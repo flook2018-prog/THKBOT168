@@ -1,19 +1,16 @@
-from flask import Flask, request, jsonify, render_template, Response
+from flask import Flask, request, jsonify, render_template
 import os, json, jwt, random
 from datetime import datetime, date, timedelta
 from collections import defaultdict
-import time
 
 app = Flask(__name__)
 
 transactions = []
 daily_summary_history = defaultdict(float)
 ip_approver_map = {}
-subscribers = []
 
 DATA_FILE = "transactions_data.json"
 LOG_FILE = "transactions.log"
-IP_FILE = "ip_names.json"
 SECRET_KEY = "8d2909e5a59bc24bbf14059e9e591402"
 
 BANK_MAP_TH = {
@@ -37,16 +34,8 @@ if os.path.exists(DATA_FILE):
                     tx["approved_time"] = datetime.strptime(tx["approved_time"], "%Y-%m-%d %H:%M:%S")
                 if "cancelled_time" in tx:
                     tx["cancelled_time"] = datetime.strptime(tx["cancelled_time"], "%Y-%m-%d %H:%M:%S")
-        except:
+        except Exception:
             transactions = []
-
-# โหลด IP map ถ้ามี
-if os.path.exists(IP_FILE):
-    with open(IP_FILE, "r", encoding="utf-8") as f:
-        try:
-            ip_approver_map = json.load(f)
-        except:
-            ip_approver_map = {}
 
 def save_transactions():
     with open(DATA_FILE, "w", encoding="utf-8") as f:
@@ -59,10 +48,6 @@ def save_transactions():
             } for tx in transactions
         ], f, ensure_ascii=False, indent=2)
 
-def save_ip_map():
-    with open(IP_FILE, "w", encoding="utf-8") as f:
-        json.dump(ip_approver_map, f, ensure_ascii=False, indent=2)
-
 def log_with_time(*args):
     ts = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
     msg = f"[{ts}] " + " ".join(str(a) for a in args)
@@ -73,10 +58,6 @@ def log_with_time(*args):
 def random_english_name():
     first_names = ["Alice","Bob","Charlie","David","Eve","Frank","Grace","Hannah","Ian","Jack","Kathy","Leo","Mia","Nina","Oscar"]
     return random.choice(first_names)
-
-def notify_clients(tx):
-    for subscriber in subscribers:
-        subscriber.append(tx)
 
 @app.route("/")
 def index():
@@ -124,8 +105,6 @@ def approve():
 
     if user_ip not in ip_approver_map:
         ip_approver_map[user_ip] = random_english_name()
-        save_ip_map()
-
     approver_name = ip_approver_map[user_ip]
 
     for tx in transactions:
@@ -145,11 +124,8 @@ def approve():
 def cancel():
     txid = request.json.get("id")
     user_ip = request.remote_addr or "unknown"
-
     if user_ip not in ip_approver_map:
         ip_approver_map[user_ip] = random_english_name()
-        save_ip_map()
-
     canceler_name = ip_approver_map[user_ip]
 
     for tx in transactions:
@@ -235,14 +211,11 @@ def webhook():
         transactions.append(tx)
         save_transactions()
         log_with_time("[WEBHOOK RECEIVED]", tx)
-
-        # แจ้ง client ให้ refresh ทันที
-        notify_clients(tx)
-
         return jsonify({"status": "success"}), 200
     except Exception as e:
         log_with_time("[WEBHOOK ERROR]", str(e))
         return jsonify({"status": "error", "message": str(e)}), 500
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
+    port = int(os.environ.get("PORT", 8080))
+    app.run(host="0.0.0.0", port=port)
