@@ -112,11 +112,12 @@ async function fetchTransactions(){
     data.new_orders.forEach(tx=>{
         let row=newBody.insertRow();
         row.insertCell(0).innerText=tx.id;
-        row.insertCell(1).innerText=tx.event;
-        row.insertCell(2).innerText=tx.amount_str;
-        row.insertCell(3).innerText=tx.name || "-";
+        row.insertCell(1).innerText=tx.type || "Unknown";
+        row.insertCell(2).innerText=tx.amount_str || "0.00";
+        row.insertCell(3).innerText=tx.name_mobile || "-";
         row.insertCell(4).innerText=tx.time_str || "-";
         row.insertCell(5).innerText=tx.bank || "-";
+
         let cell=row.insertCell(6);
         let btnApprove=document.createElement("button");
         btnApprove.className="approve"; btnApprove.innerText="อนุมัติ";
@@ -140,14 +141,15 @@ async function fetchTransactions(){
     data.approved_orders.forEach(tx=>{
         let row=approvedBody.insertRow();
         row.insertCell(0).innerText=tx.id;
-        row.insertCell(1).innerText=tx.event;
-        row.insertCell(2).innerText=tx.amount_str;
-        row.insertCell(3).innerText=tx.name || "-";
+        row.insertCell(1).innerText=tx.type || "Unknown";
+        row.insertCell(2).innerText=tx.amount_str || "0.00";
+        row.insertCell(3).innerText=tx.name_mobile || "-";
         row.insertCell(4).innerText=tx.time_str || "-";
         row.insertCell(5).innerText=tx.bank || "-";
         row.insertCell(6).innerText=tx.approver_name || "-";
         row.insertCell(7).innerText=tx.approved_time_str || "-";
         row.insertCell(8).innerText=tx.customer_user || "-";
+
         let restoreBtn=document.createElement("button");
         restoreBtn.className="restore"; restoreBtn.innerText="คืนเป็น New";
         restoreBtn.onclick=async ()=>{
@@ -163,13 +165,14 @@ async function fetchTransactions(){
     data.cancelled_orders.forEach(tx=>{
         let row=cancelledBody.insertRow();
         row.insertCell(0).innerText=tx.id;
-        row.insertCell(1).innerText=tx.event;
-        row.insertCell(2).innerText=tx.amount_str;
-        row.insertCell(3).innerText=tx.name || "-";
+        row.insertCell(1).innerText=tx.type || "Unknown";
+        row.insertCell(2).innerText=tx.amount_str || "0.00";
+        row.insertCell(3).innerText=tx.name_mobile || "-";
         row.insertCell(4).innerText=tx.time_str || "-";
         row.insertCell(5).innerText=tx.bank || "-";
         row.insertCell(6).innerText=tx.canceler_name || "-";
         row.insertCell(7).innerText=tx.cancelled_time_str || "-";
+
         let restoreBtn=document.createElement("button");
         restoreBtn.className="restore"; restoreBtn.innerText="คืนเป็น New";
         restoreBtn.onclick=async ()=>{
@@ -183,12 +186,12 @@ async function fetchTransactions(){
 
 async function resetApproved(){
     if(!confirm("คุณแน่ใจว่าจะรีเซทรายการที่อนุมัติทั้งหมด?")) return;
-    await fetch("/reset_approved",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({confirm:true})});
+    await fetch("/reset_approved",{method:"POST"});
     fetchTransactions();
 }
 async function resetCancelled(){
     if(!confirm("คุณแน่ใจว่าจะรีเซทรายการที่ยกเลิกทั้งหมด?")) return;
-    await fetch("/reset_cancelled",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({confirm:true})});
+    await fetch("/reset_cancelled",{method:"POST"});
     fetchTransactions();
 }
 
