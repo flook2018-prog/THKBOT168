@@ -1,3 +1,4 @@
+จากโค้ดที่ฉันจะให้ต่อไปนี้ ช่วยเเก้ให้รายการใหม่ ที่เข้ามาอ่านถูกต้องหน่อย  Key ฉันก็ให้ไปเเล้ว
 from flask import Flask, request, jsonify, render_template
 import os, json, jwt, random
 from datetime import datetime, date, timedelta
@@ -99,7 +100,7 @@ def approve():
         if tx["id"] == txid:
             tx["status"] = "approved"
             tx["approver_name"] = approver_name
-            tx["approved_time"] = datetime.now() + timedelta(hours=7)  # เวลาไทย
+            tx["approved_time"] = datetime.now()
             tx["customer_user"] = customer_user
             day = tx["time"].strftime("%Y-%m-%d")
             daily_summary_history[day] += tx["amount"]
@@ -119,7 +120,7 @@ def cancel():
     for tx in transactions:
         if tx["id"] == txid and tx["status"] == "new":
             tx["status"] = "cancelled"
-            tx["cancelled_time"] = datetime.now() + timedelta(hours=7)  # เวลาไทย
+            tx["cancelled_time"] = datetime.now()
             tx["canceler_name"] = canceler_name
             log_with_time(f"[CANCELLED] {txid} by {canceler_name} ({user_ip})")
             break
@@ -193,16 +194,15 @@ def webhook():
         bank_code = decoded.get("channel","-")
         bank_name_th = BANK_MAP_TH.get(bank_code, bank_code)
 
-        # แปลงเวลาเป็นไทย (+7)
         time_str = decoded.get("created_at") or decoded.get("time")
         try:
             if "T" in time_str:
                 tx_time = datetime.strptime(time_str, "%Y-%m-%dT%H:%M:%S")
             else:
                 tx_time = datetime.strptime(time_str, "%Y-%m-%d %H:%M:%S")
-            tx_time += timedelta(hours=7)  # เวลาไทย
+            tx_time -= timedelta(hours=7)
         except:
-            tx_time = datetime.now() + timedelta(hours=7)
+            tx_time = datetime.now()
 
         tx = {
             "id": txid,
@@ -211,8 +211,7 @@ def webhook():
             "name": name,
             "bank": bank_name_th,
             "status": "new",
-            "time": tx_time,
-            "customer_user": decoded.get("customer_user","-")
+            "time": tx_time
         }
 
         transactions.append(tx)
