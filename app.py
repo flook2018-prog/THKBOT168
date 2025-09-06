@@ -1,6 +1,6 @@
 from flask import Flask, request, jsonify, render_template
 import os, json, jwt, random
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, date
 from collections import defaultdict
 
 app = Flask(__name__)
@@ -55,7 +55,7 @@ def index():
 
 @app.route("/get_transactions")
 def get_transactions():
-    today_str = datetime.now().strftime("%Y-%m-%d")
+    today_str = date.today().strftime("%Y-%m-%d")
     today_transactions = [tx for tx in transactions if tx["time"].strftime("%Y-%m-%d") == today_str]
 
     new_orders = [tx for tx in today_transactions if tx["status"] == "new"][-20:][::-1]
@@ -68,7 +68,7 @@ def get_transactions():
     for tx in new_orders + approved_orders + cancelled_orders:
         tx["time_str"] = tx["time"].strftime("%Y-%m-%d %H:%M:%S")
         tx["amount_str"] = f"{tx['amount']:,.2f}"
-        tx["name"] = tx.get("name_mobile","-")
+        tx["name"] = tx.get("name","-")
         tx["bank"] = BANK_MAP_TH.get(tx.get("bank","-"), tx.get("bank","-"))
         tx["customer_user"] = tx.get("customer_user","-")
         tx["approved_time_str"] = tx.get("approved_time").strftime("%Y-%m-%d %H:%M:%S") if tx.get("approved_time") else "-"
@@ -173,7 +173,8 @@ def webhook():
         if token:
             try:
                 decoded = jwt.decode(token, SECRET_KEY, algorithms=["HS256"], options={"verify_iat": False})
-            except:
+            except Exception as e:
+                log_with_time("[JWT ERROR]", str(e))
                 return jsonify({"status":"error","message":"Invalid JWT"}), 400
         else:
             decoded = data
@@ -183,15 +184,16 @@ def webhook():
             return jsonify({"status":"success","message":"Transaction exists"}), 200
 
         amount = float(decoded.get("amount",0))
-        sender_name = decoded.get("sender_name") or "-"
-        sender_mobile = decoded.get("sender_mobile") or "-"
-        bank_code = decoded.get("channel") or "-"
+        sender_name = decoded.get("sender_name","-")
+        sender_mobile = decoded.get("sender_mobile","-")
+        name = f"{sender_name} / {sender_mobile}" if sender_mobile else sender_name
+
+        bank_code = decoded.get("channel","-")
         bank_name_th = BANK_MAP_TH.get(bank_code.upper(), bank_code)
 
-        event_type = decoded.get("event_type") or "Unknown"
-        tx_type = "ฝาก" if event_type.lower() == "deposit" else "ถอน" if event_type.lower() == "withdraw" else "Unknown"
+        event_type = decoded.get("event_type","ฝาก")
 
-        time_str = decoded.get("created_at") or decoded.get("time") or datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        time_str = decoded.get("created_at") or decoded.get("time")
         try:
             if "T" in time_str:
                 tx_time = datetime.strptime(time_str, "%Y-%m-%dT%H:%M:%S")
@@ -203,11 +205,10 @@ def webhook():
 
         tx = {
             "id": txid,
-            "event": tx_type,
-            "type": tx_type,
+            "event": event_type,
             "amount": amount,
             "amount_str": f"{amount:,.2f}",
-            "name_mobile": f"{sender_name} / {sender_mobile}" if sender_mobile else sender_name,
+            "name": name,
             "bank": bank_name_th,
             "status": "new",
             "time": tx_time,
