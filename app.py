@@ -1,6 +1,6 @@
 from flask import Flask, request, jsonify, render_template
 import os, json, jwt
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, date
 from collections import defaultdict
 
 app = Flask(__name__)
@@ -12,10 +12,8 @@ ip_approver_map = {}
 DATA_FILE = "transactions_data.json"
 LOG_FILE = "transactions.log"
 
-# secret key อ่านจาก env (ตั้งใน Railway Service Variable)
 SECRET_KEY = os.getenv("TRUEWALLET_KEY", "f557ff6589e6d075581d68df1d4f3af7")
 
-# เก็บ raw payload ล่าสุดไว้
 last_raw_payload = None
 
 # ---------------- Logger ----------------
@@ -68,6 +66,36 @@ BANK_MAP_TH = {
 def index():
     return render_template("index.html", transactions=transactions)
 
+# ---------------- Get Transactions ----------------
+@app.route("/get_transactions")
+def get_transactions():
+    today_str = date.today().strftime("%Y-%m-%d")
+    today_transactions = [tx for tx in transactions if tx["time"].strftime("%Y-%m-%d") == today_str]
+
+    new_orders = [tx for tx in today_transactions if tx["status"] == "new"][-20:][::-1]
+    approved_orders = [tx for tx in today_transactions if tx["status"] == "approved"][-20:][::-1]
+    cancelled_orders = [tx for tx in today_transactions if tx["status"] == "cancelled"][-20:][::-1]
+
+    wallet_daily_total = sum(tx["amount"] for tx in approved_orders)
+    wallet_daily_total_str = f"{wallet_daily_total:,.2f}"
+
+    for tx in new_orders + approved_orders + cancelled_orders:
+        tx["time_str"] = tx["time"].strftime("%Y-%m-%d %H:%M:%S")
+        tx["amount_str"] = f"{tx['amount']:,.2f}"
+        tx["name"] = tx.get("name","-")
+        tx["bank"] = BANK_MAP_TH.get(tx.get("bank","-"), tx.get("bank","-"))
+        tx["customer_user"] = tx.get("customer_user","-")
+
+    daily_list = [{"date": d, "total": f"{v:,.2f}"} for d, v in sorted(daily_summary_history.items())]
+
+    return jsonify({
+        "new_orders": new_orders,
+        "approved_orders": approved_orders,
+        "cancelled_orders": cancelled_orders,
+        "wallet_daily_total": wallet_daily_total_str,
+        "daily_summary": daily_list
+    })
+
 # ---------------- Webhook ----------------
 @app.route("/truewallet/webhook", methods=["POST"])
 def webhook():
@@ -79,10 +107,7 @@ def webhook():
             log_with_time("[WEBHOOK ERROR] No JSON received")
             return jsonify({"status": "error", "message": "No JSON received"}), 400
 
-        # เก็บ raw payload ล่าสุด
         last_raw_payload = data
-
-        # 📝 log raw payload
         log_with_time("[WEBHOOK PAYLOAD RAW]", json.dumps(data, ensure_ascii=False))
 
         token = data.get("token")
@@ -102,7 +127,6 @@ def webhook():
             decoded = data
             log_with_time("[WEBHOOK RAW NO TOKEN]", json.dumps(decoded, ensure_ascii=False))
 
-        # ---------------- Mapping ฟิลด์ ----------------
         txid = decoded.get("transaction_id") or f"TX{len(transactions)+1}"
         if any(tx["id"] == txid for tx in transactions):
             return jsonify({"status": "success", "message": "Transaction exists"}), 200
@@ -115,7 +139,6 @@ def webhook():
         bank_code = decoded.get("channel") or decoded.get("bank") or "TRUEWALLET"
         bank_name_th = BANK_MAP_TH.get(bank_code, bank_code)
 
-        # ---------------- เวลา ----------------
         time_str = decoded.get("created_at") or decoded.get("time")
         try:
             if time_str and "T" in time_str:
@@ -124,13 +147,11 @@ def webhook():
                 tx_time = datetime.strptime(time_str, "%Y-%m-%d %H:%M:%S")
             else:
                 tx_time = datetime.now()
-            # ✅ แปลงเวลาไทย (+7 ชั่วโมง)
-            tx_time += timedelta(hours=7)
+            tx_time += timedelta(hours=7)  # ✅ เวลาไทย
         except Exception as e:
             log_with_time("[TIME PARSE ERROR]", str(e))
             tx_time = datetime.now()
 
-        # ---------------- บันทึกธุรกรรม ----------------
         tx = {
             "id": txid,
             "event": event,
@@ -150,7 +171,7 @@ def webhook():
         log_with_time("[WEBHOOK ERROR]", str(e))
         return jsonify({"status": "error", "message": str(e)}), 500
 
-# ---------------- Endpoint Debug ----------------
+# ---------------- Debug ----------------
 @app.route("/debug/transactions", methods=["GET"])
 def debug_transactions():
     return jsonify({
