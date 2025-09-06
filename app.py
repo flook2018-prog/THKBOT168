@@ -65,15 +65,15 @@ def get_transactions():
     wallet_daily_total = sum(tx["amount"] for tx in approved_orders)
     wallet_daily_total_str = f"{wallet_daily_total:,.2f}"
 
-    # แปลงเวลาเป็นไทยเฉพาะส่งหน้าเว็บ
+    # แปลงเวลาเพื่อแสดงบนเว็บ (-7 ชั่วโมง) เท่านั้น
     for tx in new_orders + approved_orders + cancelled_orders:
-        tx["time_str"] = (tx["time"] + timedelta(hours=7)).strftime("%Y-%m-%d %H:%M:%S")
+        tx["time_str"] = (tx["time"] - timedelta(hours=7)).strftime("%Y-%m-%d %H:%M:%S")
         tx["amount_str"] = f"{tx['amount']:,.2f}"
         tx["name"] = tx.get("name","-")
         tx["bank"] = BANK_MAP_TH.get(tx.get("bank","-"), tx.get("bank","-"))
         tx["customer_user"] = tx.get("customer_user","-")
-        tx["approved_time_str"] = (tx.get("approved_time") + timedelta(hours=7)).strftime("%Y-%m-%d %H:%M:%S") if tx.get("approved_time") else "-"
-        tx["cancelled_time_str"] = (tx.get("cancelled_time") + timedelta(hours=7)).strftime("%Y-%m-%d %H:%M:%S") if tx.get("cancelled_time") else "-"
+        tx["approved_time_str"] = (tx.get("approved_time") - timedelta(hours=7)).strftime("%Y-%m-%d %H:%M:%S") if tx.get("approved_time") else "-"
+        tx["cancelled_time_str"] = (tx.get("cancelled_time") - timedelta(hours=7)).strftime("%Y-%m-%d %H:%M:%S") if tx.get("cancelled_time") else "-"
 
     daily_list = [{"date": d, "total": f"{v:,.2f}"} for d, v in sorted(daily_summary_history.items())]
 
@@ -194,13 +194,13 @@ def webhook():
 
         event_type = decoded.get("event_type","ฝาก")
 
-        # เก็บเวลา **ดิบตามที่ได้รับ**
         time_str = decoded.get("created_at") or decoded.get("time")
         try:
             if "T" in time_str:
                 tx_time = datetime.strptime(time_str, "%Y-%m-%dT%H:%M:%S")
             else:
                 tx_time = datetime.strptime(time_str, "%Y-%m-%d %H:%M:%S")
+            # เก็บข้อมูลจริงตามดิบ (ไม่แก้)
         except:
             tx_time = datetime.now()
 
@@ -208,10 +208,12 @@ def webhook():
             "id": txid,
             "event": event_type,
             "amount": amount,
+            "amount_str": f"{amount:,.2f}",
             "name": name,
             "bank": bank_name_th,
             "status": "new",
-            "time": tx_time  # เก็บเวลาดิบ
+            "time": tx_time,
+            "time_str": tx_time.strftime("%Y-%m-%d %H:%M:%S")
         }
 
         transactions.append(tx)
