@@ -67,11 +67,11 @@ def index():
 
 @app.route("/get_transactions")
 def get_transactions():
+    # เตรียมเวลา +7 สำหรับเว็บ
     for tx in transactions:
-        # เวลาแสดงบนเว็บเป็น +7 ชั่วโมง
         tx["_display_time"] = tx["time"] + timedelta(hours=7)
-        tx["_approved_display_time"] = tx["approved_time"] + timedelta(hours=7) if tx.get("approved_time") else None
-        tx["_cancelled_display_time"] = tx["cancelled_time"] + timedelta(hours=7) if tx.get("cancelled_time") else None
+        tx["_approved_display_time"] = tx.get("approved_time") + timedelta(hours=7) if tx.get("approved_time") else None
+        tx["_cancelled_display_time"] = tx.get("cancelled_time") + timedelta(hours=7) if tx.get("cancelled_time") else None
 
     new_orders = [tx for tx in transactions if tx["status"] == "new"][::-1]
     approved_orders = [tx for tx in transactions if tx["status"] == "approved"][::-1]
@@ -80,14 +80,12 @@ def get_transactions():
     wallet_daily_total = sum(tx["amount"] for tx in approved_orders)
     wallet_daily_total_str = f"{wallet_daily_total:,.2f}"
 
-    # แสดงรายการใหม่
     for tx in new_orders:
         tx["time_str"] = tx["_display_time"].strftime("%Y-%m-%d %H:%M:%S")
         tx["amount_str"] = f"{tx.get('amount',0):,.2f}"
         tx["name"] = tx.get("name","-")
         tx["bank"] = BANK_MAP_TH.get(tx.get("bank","-"), tx.get("bank","-"))
 
-    # แสดงรายการ approved
     for tx in approved_orders:
         tx["time_str"] = tx["_display_time"].strftime("%Y-%m-%d %H:%M:%S")
         tx["approved_time_str"] = tx["_approved_display_time"].strftime("%Y-%m-%d %H:%M:%S") if tx["_approved_display_time"] else "-"
@@ -96,7 +94,6 @@ def get_transactions():
         tx["bank"] = BANK_MAP_TH.get(tx.get("bank","-"), tx.get("bank","-"))
         tx["customer_user"] = tx.get("customer_user","-")
 
-    # แสดงรายการ cancelled
     for tx in cancelled_orders:
         tx["time_str"] = tx["_display_time"].strftime("%Y-%m-%d %H:%M:%S")
         tx["cancelled_time_str"] = tx["_cancelled_display_time"].strftime("%Y-%m-%d %H:%M:%S") if tx["_cancelled_display_time"] else "-"
@@ -213,7 +210,7 @@ def webhook():
         if any(tx["id"] == txid for tx in transactions):
             return jsonify({"status":"success","message":"Transaction exists"}), 200
 
-        # จำนวนเงิน: รองรับหลาย key
+        # จำนวนเงิน
         amount = 0
         for k in ["amount","amount_str","total_amount"]:
             if k in decoded:
@@ -229,14 +226,14 @@ def webhook():
         name = f"{sender_name} / {sender_mobile}" if sender_mobile else sender_name
 
         # ธนาคาร
-        bank_code = decoded.get("channel") or decoded.get("bank_code") or "-"
-        bank_name_th = BANK_MAP_TH.get(bank_code.upper(), bank_code)
+        bank_code = (decoded.get("channel") or decoded.get("bank_code") or "-").upper()
+        bank_name_th = BANK_MAP_TH.get(bank_code, bank_code)
 
         # ประเภท event
         event_type = decoded.get("event_type","ฝาก")
 
-        # เวลา: ใช้เวลาเว็บ +7 ชั่วโมง สำหรับแสดง
-        time_str = decoded.get("created_at") or decoded.get("time")
+        # เวลา: ใช้เวลาเว็บ (ไม่แก้ดิบ) +7 ชั่วโมงสำหรับแสดง
+        time_str = decoded.get("created_at") or decoded.get("time") or ""
         try:
             if "T" in time_str:
                 tx_time = datetime.strptime(time_str, "%Y-%m-%dT%H:%M:%S")
