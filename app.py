@@ -22,10 +22,8 @@ BANK_MAP_TH = {
     "TRUEWALLET": "True Wallet",
 }
 
-# ดึง SECRET_KEY จาก Service Variable ของ Railway
-SECRET_KEY = os.environ.get("TRUEWALLET_SECRET_KEY")
-if not SECRET_KEY:
-    raise Exception("โปรดตั้ง Service Variable 'TRUEWALLET_SECRET_KEY' ใน Railway")
+# ------------------- ใช้ SECRET_KEY ฟิก -------------------
+SECRET_KEY = "f557ff6589e6d075581d68df1d4f3af7"
 
 # โหลดธุรกรรมเก่า
 if os.path.exists(DATA_FILE):
