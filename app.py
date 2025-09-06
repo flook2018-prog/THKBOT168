@@ -179,11 +179,13 @@ def webhook():
             log_with_time("[WEBHOOK ERROR] No JSON received")
             return jsonify({"status":"error","message":"No JSON received"}), 400
 
-        token = data.get("message") or data.get("token")
+        # message คือ JWT web token
+        token = data.get("message")
         if not token:
             log_with_time("[WEBHOOK ERROR] No JWT token found")
             return jsonify({"status":"error","message":"No JWT token found"}), 400
 
+        # decode JWT
         try:
             decoded = jwt.decode(token, SECRET_KEY, algorithms=["HS256"], options={"verify_iat": False})
             log_with_time("[WEBHOOK DECODED]", decoded)
@@ -198,21 +200,21 @@ def webhook():
 
         # จำนวนเงิน (จากสตางค์ → บาท)
         try:
-            amount = float(decoded.get("amount", 0)) / 100
+            amount = float(decoded.get("amount",0)) / 100
         except:
             amount = 0.0
 
         # ชื่อผู้โอน / เบอร์
-        sender_name = decoded.get("sender_name", "")
-        sender_mobile = decoded.get("sender_mobile", "")
+        sender_name = decoded.get("sender_name","")
+        sender_mobile = decoded.get("sender_mobile","")
         name = f"{sender_name} / {sender_mobile}" if sender_mobile else sender_name or "-"
 
         # ธนาคาร / ช่องทาง
-        channel = decoded.get("channel", "")
+        channel = decoded.get("channel","")
         bank_name_th = BANK_MAP_TH.get(channel, channel) if channel else "-"
 
         # เวลา (received_time) +7 ชั่วโมง
-        time_str = decoded.get("received_time", datetime.now().strftime("%Y-%m-%dT%H:%M:%S"))
+        time_str = decoded.get("received_time") or decoded.get("created_at") or datetime.now().strftime("%Y-%m-%dT%H:%M:%S")
         try:
             time_clean = time_str.split('+')[0]
             tx_time = datetime.strptime(time_clean, "%Y-%m-%dT%H:%M:%S") + timedelta(hours=7)
