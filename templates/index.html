@@ -60,7 +60,7 @@ button.restore:hover{background:#e0a800}
     <div class="scroll-box">
       <table id="new-orders-table">
         <thead>
-        <tr><th>ID</th><th>ประเภท</th><th>จำนวน</th><th>ชื่อ/เบอร์</th><th>เวลา</th><th>ธนาคาร</th><th>จัดการ</th></tr>
+        <tr><th>ID</th><th>ประเภท</th><th>จำนวน</th><th>ชื่อ/เบอร์</th><th>เวลา</th><th>ธนาคาร</th><th>สลิป</th><th>จัดการ</th></tr>
         </thead>
         <tbody></tbody>
       </table>
@@ -72,7 +72,7 @@ button.restore:hover{background:#e0a800}
       <table id="approved-orders-table">
         <thead>
         <tr><th>ID</th><th>ประเภท</th><th>จำนวน</th><th>ชื่อ/เบอร์</th><th>เวลา</th>
-        <th>ธนาคาร</th><th>ผู้อนุมัติ</th><th>เวลาอนุมัติ</th><th>ยูสเซอร์ลูกค้า</th><th>คืนเป็น New</th></tr>
+        <th>ธนาคาร</th><th>ผู้อนุมัติ</th><th>เวลาอนุมัติ</th><th>ยูสเซอร์ลูกค้า</th><th>สลิป</th><th>คืนเป็น New</th></tr>
         </thead>
         <tbody></tbody>
       </table>
@@ -86,7 +86,7 @@ button.restore:hover{background:#e0a800}
     <table id="cancelled-orders-table">
       <thead>
       <tr><th>ID</th><th>ประเภท</th><th>จำนวน</th><th>ชื่อ/เบอร์</th><th>เวลา</th>
-      <th>ธนาคาร</th><th>ผู้ยกเลิก</th><th>เวลา Cancel</th><th>คืนเป็น New</th></tr>
+      <th>ธนาคาร</th><th>ผู้ยกเลิก</th><th>เวลา Cancel</th><th>สลิป</th><th>คืนเป็น New</th></tr>
       </thead>
       <tbody></tbody>
     </table>
@@ -108,6 +108,14 @@ async function fetchTransactions(){
         row.insertCell(1).innerText=d.total;
     });
 
+    function renderSlip(tx){
+        if(tx.slip_filename){
+            return `<a href="/slip/${tx.slip_filename}" target="_blank">ดูรูป</a>`;
+        } else {
+            return `<input type="file" onchange="uploadSlip(event,'${tx.id}')">`;
+        }
+    }
+
     let newBody = document.querySelector("#new-orders-table tbody");
     newBody.innerHTML="";
     data.new_orders.forEach(tx=>{
@@ -118,7 +126,9 @@ async function fetchTransactions(){
         row.insertCell(3).innerText=tx.name || "-";
         row.insertCell(4).innerText=tx.time_str || "-";
         row.insertCell(5).innerText=tx.bank || "-";
-        let cell=row.insertCell(6);
+        row.insertCell(6).innerHTML=renderSlip(tx);
+
+        let cell=row.insertCell(7);
         let btnApprove=document.createElement("button");
         btnApprove.className="approve"; btnApprove.innerText="อนุมัติ";
         btnApprove.onclick=async ()=>{
@@ -136,6 +146,14 @@ async function fetchTransactions(){
         cell.appendChild(btnApprove); cell.appendChild(btnCancel);
     });
 
+    function renderSlipApproved(tx){
+        if(tx.slip_filename){
+            return `<a href="/slip/${tx.slip_filename}" target="_blank">ดูรูป</a>`;
+        } else {
+            return "-";
+        }
+    }
+
     let approvedBody=document.querySelector("#approved-orders-table tbody");
     approvedBody.innerHTML="";
     data.approved_orders.forEach(tx=>{
@@ -149,6 +167,8 @@ async function fetchTransactions(){
         row.insertCell(6).innerText=tx.approver_name || "-";
         row.insertCell(7).innerText=tx.approved_time_str || "-";
         row.insertCell(8).innerText=tx.customer_user || "-";
+        row.insertCell(9).innerHTML=renderSlipApproved(tx);
+
         let restoreBtn=document.createElement("button");
         restoreBtn.className="restore"; restoreBtn.innerText="คืนเป็น New";
         restoreBtn.onclick=async ()=>{
@@ -156,7 +176,7 @@ async function fetchTransactions(){
             await fetch("/restore",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({id:tx.id})});
             fetchTransactions();
         };
-        row.insertCell(9).appendChild(restoreBtn);
+        row.insertCell(10).appendChild(restoreBtn);
     });
 
     let cancelledBody=document.querySelector("#cancelled-orders-table tbody");
@@ -171,6 +191,8 @@ async function fetchTransactions(){
         row.insertCell(5).innerText=tx.bank || "-";
         row.insertCell(6).innerText=tx.canceler_name || "-";
         row.insertCell(7).innerText=tx.cancelled_time_str || "-";
+        row.insertCell(8).innerHTML=renderSlipApproved(tx);
+
         let restoreBtn=document.createElement("button");
         restoreBtn.className="restore"; restoreBtn.innerText="คืนเป็น New";
         restoreBtn.onclick=async ()=>{
@@ -178,8 +200,17 @@ async function fetchTransactions(){
             await fetch("/restore",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({id:tx.id})});
             fetchTransactions();
         };
-        row.insertCell(8).appendChild(restoreBtn);
+        row.insertCell(9).appendChild(restoreBtn);
     });
+}
+
+async function uploadSlip(event, txid){
+    const file = event.target.files[0];
+    if(!file) return;
+    const formData = new FormData();
+    formData.append("file", file);
+    await fetch(`/upload_slip/${txid}`, {method:"POST", body:formData});
+    fetchTransactions();
 }
 
 async function resetApproved(){
