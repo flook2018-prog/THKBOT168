@@ -20,7 +20,7 @@ DATA_FILE = "transactions_data.json"
 LOG_FILE = "transactions.log"
 SECRET_KEY = "f557ff6589e6d075581d68df1d4f3af7"
 
-# กำหนด timezone
+# -------------------- Timezone --------------------
 TZ = pytz.timezone("Asia/Bangkok")
 
 BANK_MAP_TH = {
@@ -35,7 +35,22 @@ BANK_MAP_TH = {
 }
 
 # -------------------- Helpers --------------------
+def remove_old_transactions():
+    cutoff_date = datetime.now(TZ) - timedelta(days=60)  # ลบรายการเก่ากว่า 2 เดือน
+    for key in ["new", "approved", "cancelled"]:
+        new_list = []
+        for tx in transactions[key]:
+            try:
+                tx_time = datetime.fromisoformat(tx["time"]).astimezone(TZ)
+                if tx_time >= cutoff_date:
+                    new_list.append(tx)
+            except:
+                # ถ้าแปลงเวลาไม่ได้ ให้เก็บไว้ก่อน
+                new_list.append(tx)
+        transactions[key] = new_list
+
 def save_transactions():
+    remove_old_transactions()
     with open(DATA_FILE, "w", encoding="utf-8") as f:
         json.dump(transactions, f, ensure_ascii=False, indent=2)
 
@@ -80,7 +95,6 @@ def get_transactions():
     wallet_daily_total = sum(tx["amount"] for tx in approved_orders)
     wallet_daily_total_str = fmt_amount(wallet_daily_total)
 
-    # ฟอร์แมตเวลาเป็น Asia/Bangkok
     for tx in new_orders:
         tx["time_str"] = fmt_time_local(tx.get("time"))
     for tx in approved_orders:
@@ -208,6 +222,7 @@ def truewallet_webhook():
 
         txid = decoded.get("transaction_id") or f"TX{len(transactions['new'])+len(transactions['approved'])+len(transactions['cancelled'])+1}"
         if any(tx["id"] == txid for lst in transactions.values() for tx in lst):
+            log_with_time("[WEBHOOK] Transaction exists", txid)
             return jsonify({"status":"success","message":"Transaction exists"}), 200
 
         amount = int(decoded.get("amount",0))
@@ -226,7 +241,7 @@ def truewallet_webhook():
         else:
             bank_name_th="-"
 
-        # แปลงเวลาที่ได้รับเป็น UTC ก่อนเก็บ
+        # เวลา UTC -> เก็บใน database
         time_str = decoded.get("received_time") or datetime.utcnow().isoformat()
         try:
             tx_time_utc = datetime.fromisoformat(time_str)
@@ -245,9 +260,9 @@ def truewallet_webhook():
             "slip_filename": None
         }
 
+        log_with_time("[WEBHOOK RECEIVED]", tx)
         transactions["new"].append(tx)
         save_transactions()
-        log_with_time("[WEBHOOK RECEIVED]", tx)
         return jsonify({"status":"success"}), 200
 
     except Exception as e:
