@@ -48,6 +48,10 @@ button.restore:hover{background:#e0a800}
     </table>
   </div>
   <div class="summary-card">
+    <h2>Top 5 ลูกค้าแต่ละวัน (ฝากสูงสุด)</h2>
+    <canvas id="top5-chart" width="400" height="150"></canvas>
+  </div>
+  <div class="summary-card">
     <h2>รีเซทรายการ</h2>
     <button onclick="resetApproved()">รีเซทรายการอนุมัติ</button>
     <button onclick="resetCancelled()">รีเซทรายการยกเลิก</button>
@@ -93,7 +97,10 @@ button.restore:hover{background:#e0a800}
   </div>
 </div>
 
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 <script>
+let top5Chart=null;
+
 async function fetchTransactions(){
     let resp=await fetch("/get_transactions"); 
     let data=await resp.json();
@@ -146,14 +153,6 @@ async function fetchTransactions(){
         cell.appendChild(btnApprove); cell.appendChild(btnCancel);
     });
 
-    function renderSlipApproved(tx){
-        if(tx.slip_filename){
-            return `<a href="/slip/${tx.slip_filename}" target="_blank">ดูรูป</a>`;
-        } else {
-            return "-";
-        }
-    }
-
     let approvedBody=document.querySelector("#approved-orders-table tbody");
     approvedBody.innerHTML="";
     data.approved_orders.forEach(tx=>{
@@ -167,7 +166,7 @@ async function fetchTransactions(){
         row.insertCell(6).innerText=tx.approver_name || "-";
         row.insertCell(7).innerText=tx.approved_time_str || "-";
         row.insertCell(8).innerText=tx.customer_user || "-";
-        row.insertCell(9).innerHTML=renderSlipApproved(tx);
+        row.insertCell(9).innerHTML=tx.slip_filename ? `<a href="/slip/${tx.slip_filename}" target="_blank">ดูรูป</a>` : "-";
 
         let restoreBtn=document.createElement("button");
         restoreBtn.className="restore"; restoreBtn.innerText="คืนเป็น New";
@@ -191,7 +190,7 @@ async function fetchTransactions(){
         row.insertCell(5).innerText=tx.bank || "-";
         row.insertCell(6).innerText=tx.canceler_name || "-";
         row.insertCell(7).innerText=tx.cancelled_time_str || "-";
-        row.insertCell(8).innerHTML=renderSlipApproved(tx);
+        row.insertCell(8).innerHTML=tx.slip_filename ? `<a href="/slip/${tx.slip_filename}" target="_blank">ดูรูป</a>` : "-";
 
         let restoreBtn=document.createElement("button");
         restoreBtn.className="restore"; restoreBtn.innerText="คืนเป็น New";
@@ -201,6 +200,24 @@ async function fetchTransactions(){
             fetchTransactions();
         };
         row.insertCell(9).appendChild(restoreBtn);
+    });
+
+    // ------------------ Top5 Chart ------------------
+    let top5Data = data.top5_summary;
+    let ctx = document.getElementById("top5-chart").getContext("2d");
+    let labels = Object.keys(top5Data).sort();
+    let datasets=[];
+    labels.forEach(day=>{
+        top5Data[day].forEach((d,i)=>{
+            if(!datasets[i]) datasets[i]={label:d.user,data:[],backgroundColor:'rgba(40,167,69,0.6)'};
+            datasets[i].data.push(d.amount/100);
+        });
+    });
+    if(top5Chart) top5Chart.destroy();
+    top5Chart = new Chart(ctx,{
+        type:'bar',
+        data:{labels:labels,datasets:datasets},
+        options:{indexAxis:'y',responsive:true,plugins:{legend:{position:'bottom'}},scales:{x:{title:{display:true,text:'จำนวนเงิน (บาท)'}},y:{title:{display:true,text:'วัน'}}}}
     });
 }
 
