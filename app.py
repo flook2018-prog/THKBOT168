@@ -63,13 +63,7 @@ def fmt_time_local(t):
     return dt.astimezone(TZ).strftime("%Y-%m-%d %H:%M:%S")
 
 def fmt_amount(a):
-    return f"{a/100:,.2f}" if isinstance(a,(int,float)) else str(a)
-
-def cleanup_old_transactions():
-    """ลบรายการเก่าเกิน 2 เดือน"""
-    cutoff = datetime.now(TZ) - timedelta(days=60)
-    for key in ["new","approved","cancelled"]:
-        transactions[key] = [tx for tx in transactions[key] if datetime.fromisoformat(tx["time"]) >= cutoff]
+    return f"{a/100:,.2f}" if isinstance(a,(int,float,int)) else str(a)
 
 # -------------------- Flask Endpoints --------------------
 @app.route("/")
@@ -79,10 +73,8 @@ def index():
 
 @app.route("/get_transactions")
 def get_transactions():
-    cleanup_old_transactions()
-
     new_orders = transactions["new"][-20:][::-1]
-    approved_orders = transactions["approved"][-20:][::-1]
+    approved_orders = transactions["approved"][-100:][::-1]  # เก็บ 100 รายการล่าสุด
     cancelled_orders = transactions["cancelled"][-20:][::-1]
 
     wallet_daily_total = sum(tx["amount"] for tx in approved_orders)
@@ -111,6 +103,9 @@ def get_transactions():
 def approve():
     txid = request.json.get("id")
     customer_user = request.json.get("customer_user")
+    if not customer_user or not customer_user.startswith("thk"):
+        return jsonify({"status":"error","message":"Customer user ต้องขึ้นต้นด้วย thk"}), 400
+
     user_ip = request.remote_addr or "unknown"
     if user_ip not in ip_approver_map:
         ip_approver_map[user_ip] = random_english_name()
@@ -121,13 +116,14 @@ def approve():
             tx["status"] = "approved"
             tx["approver_name"] = approver_name
             tx["approved_time"] = datetime.utcnow().isoformat()
-            if customer_user and customer_user.startswith("thk") and customer_user[3:].isdigit():
-                tx["customer_user"] = customer_user
+            tx["customer_user"] = customer_user
             transactions["approved"].append(tx)
             transactions["new"].remove(tx)
+
             day = tx["time"][:10] if isinstance(tx["time"], str) else tx["time"].strftime("%Y-%m-%d")
             daily_summary_history[day] += tx["amount"]
-            log_with_time(f"[APPROVED] {txid} by {approver_name} ({user_ip}) for customer {tx.get('customer_user','-')}")
+
+            log_with_time(f"[APPROVED] {txid} by {approver_name} ({user_ip}) for customer {customer_user}")
             break
     save_transactions()
     return jsonify({"status": "success"}), 200
@@ -222,10 +218,10 @@ def truewallet_webhook():
         amount = int(decoded.get("amount",0))
         sender_name = decoded.get("sender_name","-")
         sender_mobile = decoded.get("sender_mobile","-")
-        name = f"{sender_name} / {sender_mobile}" if sender_mobile and sender_mobile != "-" else sender_name
+        name = f"{sender_name} / {sender_mobile}" if sender_mobile and sender_mobile!="-” else sender_name
+
         event_type = decoded.get("event_type","ฝาก").upper()
         bank_code = (decoded.get("channel") or "").upper()
-
         if event_type=="P2P" or bank_code in ["TRUEWALLET","WALLET"]:
             bank_name_th="ทรูวอเลท"
         elif bank_code in BANK_MAP_TH:
@@ -235,7 +231,6 @@ def truewallet_webhook():
         else:
             bank_name_th="-"
 
-        # แปลงเวลาที่ได้รับเป็น UTC ก่อนเก็บ
         time_str = decoded.get("received_time") or datetime.utcnow().isoformat()
         try:
             tx_time_utc = datetime.fromisoformat(time_str)
