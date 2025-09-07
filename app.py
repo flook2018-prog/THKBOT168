@@ -1,8 +1,9 @@
-from flask import Flask, request, jsonify, render_template
+from flask import Flask, request, jsonify, render_template, send_file
 import os, jwt, random
 from datetime import datetime
 import psycopg2
 from psycopg2.extras import RealDictCursor
+from werkzeug.utils import secure_filename
 
 app = Flask(__name__)
 
@@ -10,7 +11,6 @@ app = Flask(__name__)
 SECRET_KEY = "f557ff6589e6d075581d68df1d4f3af7"
 DATABASE_URL = os.environ.get("DATABASE_URL") or "postgresql://postgres:TzfCyZkvUbFomVpqfRMMeQppGvBjxths@postgres.railway.internal:5432/railway"
 
-# แผนที่ธนาคารเป็นภาษาไทย
 BANK_MAP_TH = {
     "BBL": "กรุงเทพ",
     "KBANK": "กสิกรไทย",
@@ -22,7 +22,7 @@ BANK_MAP_TH = {
     "7-ELEVEN": "7-Eleven",
 }
 
-# -------------------- Connect PostgreSQL --------------------
+# -------------------- PostgreSQL Connection --------------------
 conn = psycopg2.connect(DATABASE_URL, sslmode="require")
 cursor = conn.cursor(cursor_factory=RealDictCursor)
 
@@ -40,10 +40,16 @@ CREATE TABLE IF NOT EXISTS transactions (
     approved_time TIMESTAMP,
     canceler_name TEXT,
     cancelled_time TIMESTAMP,
-    customer_user TEXT
+    customer_user TEXT,
+    slip_url TEXT
 )
 """)
 conn.commit()
+
+# -------------------- Upload Folder --------------------
+UPLOAD_FOLDER = "uploads/"
+os.makedirs(UPLOAD_FOLDER, exist_ok=True)
+app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
 
 # -------------------- Helpers --------------------
 ip_approver_map = {}
@@ -73,6 +79,17 @@ def update_daily_summary():
     """)
     return cursor.fetchall()
 
+def format_tx_list(tx_list):
+    for tx in tx_list:
+        tx["amount_str"] = fmt_amount(tx["amount"])
+        if isinstance(tx["time"], datetime):
+            tx["time_str"] = tx["time"].strftime("%Y-%m-%d %H:%M:%S")
+        else:
+            tx["time_str"] = str(tx["time"])
+        if tx["bank"] in BANK_MAP_TH:
+            tx["bank"] = BANK_MAP_TH[tx["bank"]]
+    return tx_list
+
 # -------------------- Flask Endpoints --------------------
 @app.route("/")
 def index():
@@ -81,19 +98,13 @@ def index():
 
 @app.route("/get_transactions")
 def get_transactions():
-    new_orders = get_transactions_by_status("new")
-    approved_orders = get_transactions_by_status("approved")
-    cancelled_orders = get_transactions_by_status("cancelled")
+    new_orders = format_tx_list(get_transactions_by_status("new"))
+    approved_orders = format_tx_list(get_transactions_by_status("approved"))
+    cancelled_orders = format_tx_list(get_transactions_by_status("cancelled"))
 
     wallet_daily_total = sum(tx["amount"] for tx in approved_orders)
     wallet_daily_total_str = fmt_amount(wallet_daily_total)
     daily_summary = [{"date": str(d["day"]), "total": fmt_amount(d["total"])} for d in update_daily_summary()]
-
-    # แปลงชื่อธนาคารเป็นไทย
-    for lst in [new_orders, approved_orders, cancelled_orders]:
-        for tx in lst:
-            if tx["bank"] in BANK_MAP_TH:
-                tx["bank"] = BANK_MAP_TH[tx["bank"]]
 
     return jsonify({
         "new_orders": new_orders,
@@ -110,7 +121,6 @@ def approve():
     customer_user = request.json.get("customer_user")
     user_ip = request.remote_addr or "unknown"
 
-    # ฟิกชื่อผู้อนุมัติ ตาม IP
     if user_ip not in ip_approver_map:
         ip_approver_map[user_ip] = random_english_name()
     approver_name = ip_approver_map[user_ip]
@@ -194,7 +204,6 @@ def truewallet_webhook():
         event_type = decoded.get("event_type","ฝาก").upper()
         bank_code = (decoded.get("channel") or "").upper()
 
-        # แปลงธนาคารเป็นภาษาไทย
         if event_type == "P2P" or bank_code in ["TRUEWALLET","WALLET"]:
             bank_name_th = "ทรูวอเลท"
         elif bank_code in BANK_MAP_TH:
@@ -204,8 +213,7 @@ def truewallet_webhook():
         else:
             bank_name_th = "-"
 
-        time_str = decoded.get("received_time") or datetime.now().isoformat()
-        tx_time = time_str[:19].replace("T"," ")
+        tx_time = datetime.now()
 
         cursor.execute("""
             INSERT INTO transactions (id,event,amount,name,bank,status,time)
@@ -218,6 +226,33 @@ def truewallet_webhook():
     except Exception as e:
         log_with_time("[WEBHOOK EXCEPTION]", str(e))
         return jsonify({"status":"error","message":str(e)}), 500
+
+# -------------------- Upload Slip --------------------
+@app.route("/upload_slip/<txid>", methods=["POST"])
+def upload_slip(txid):
+    if 'file' not in request.files:
+        return jsonify({"status":"error","message":"No file part"}), 400
+    file = request.files['file']
+    if file.filename == '':
+        return jsonify({"status":"error","message":"No selected file"}), 400
+    
+    filename = secure_filename(f"{txid}_{file.filename}")
+    filepath = os.path.join(app.config['UPLOAD_FOLDER'], filename)
+    file.save(filepath)
+    
+    cursor.execute("UPDATE transactions SET slip_url=%s WHERE id=%s", (filepath, txid))
+    conn.commit()
+    
+    return jsonify({"status":"success","slip_url": filepath}), 200
+
+# -------------------- View Slip --------------------
+@app.route("/slip/<txid>")
+def view_slip(txid):
+    cursor.execute("SELECT slip_url FROM transactions WHERE id=%s AND status='approved'", (txid,))
+    tx = cursor.fetchone()
+    if tx and tx["slip_url"]:
+        return send_file(tx["slip_url"])
+    return "No slip uploaded", 404
 
 # -------------------- Run App --------------------
 if __name__ == "__main__":
