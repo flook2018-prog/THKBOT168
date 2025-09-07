@@ -29,6 +29,12 @@ button.restore:hover{background:#e0a800}
 ::-webkit-scrollbar{width:8px}
 ::-webkit-scrollbar-thumb{background-color:rgba(0,0,0,0.2);border-radius:4px}
 ::-webkit-scrollbar-track{background:transparent}
+
+/* --- กราฟแท่ง --- */
+#top-users-graph{margin-bottom:20px;background:#fff;padding:15px;border-radius:12px;box-shadow:0 4px 12px rgba(0,0,0,0.08);}
+.bar-container{display:flex;flex-direction:column;gap:8px;}
+.bar-label{font-weight:bold;margin-bottom:2px;}
+.bar{background:#28a745;height:24px;border-radius:6px;position:relative;color:white;text-align:right;padding-right:5px;font-size:0.9em;}
 </style>
 </head>
 <body>
@@ -42,14 +48,17 @@ button.restore:hover{background:#e0a800}
   </div>
   <div class="summary-card">
     <h2>สรุปยอดรายวัน</h2>
+
+    <!-- กราฟ Top Users -->
+    <div id="top-users-graph">
+      <h3>Top 5 ยูสเซอร์ฝากสูงสุดต่อวัน</h3>
+      <div class="bar-container" id="top-users-bars"></div>
+    </div>
+
     <table id="daily-summary" style="width:100%;border:none">
       <thead><tr><th>วันที่</th><th>รวมอนุมัติ</th></tr></thead>
       <tbody></tbody>
     </table>
-  </div>
-  <div class="summary-card">
-    <h2>Top 5 ลูกค้าแต่ละวัน (ฝากสูงสุด)</h2>
-    <canvas id="top5-chart" width="400" height="150"></canvas>
   </div>
   <div class="summary-card">
     <h2>รีเซทรายการ</h2>
@@ -97,22 +106,50 @@ button.restore:hover{background:#e0a800}
   </div>
 </div>
 
-<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 <script>
-let top5Chart=null;
-
 async function fetchTransactions(){
     let resp=await fetch("/get_transactions"); 
     let data=await resp.json();
 
     document.getElementById("wallet-info").innerText = data.wallet_daily_total;
 
+    // daily summary
     let dailyBody = document.querySelector("#daily-summary tbody");
     dailyBody.innerHTML="";
     data.daily_summary.forEach(d=>{
         let row = dailyBody.insertRow();
         row.insertCell(0).innerText=d.date;
         row.insertCell(1).innerText=d.total;
+    });
+
+    // --- แสดงกราฟ Top Users ---
+    let topGraph = document.getElementById("top-users-bars");
+    topGraph.innerHTML="";
+    // จัดเก็บยอดรวม per user สำหรับวันปัจจุบัน
+    let today = new Date().toISOString().slice(0,10);
+    let userMap = {};
+    data.approved_orders.forEach(tx=>{
+        if(tx.customer_user && tx.customer_user.startsWith("thk")){
+            let day = tx.time_str.slice(0,10);
+            if(day===today){
+                if(!userMap[tx.customer_user]) userMap[tx.customer_user]=0;
+                userMap[tx.customer_user] += parseFloat(tx.amount)/100;
+            }
+        }
+    });
+    // แปลงเป็น array และ sort
+    let topUsers = Object.entries(userMap).sort((a,b)=>b[1]-a[1]).slice(0,5);
+    let maxVal = topUsers.length>0? topUsers[0][1]:1;
+    topUsers.forEach(([user,val])=>{
+        let barLabel = document.createElement("div");
+        barLabel.className="bar-label";
+        barLabel.innerText=`${user} (${val.toFixed(2)} บาท)`;
+        let bar = document.createElement("div");
+        bar.className="bar";
+        bar.style.width = `${(val/maxVal)*100}%`;
+        bar.innerText = `${val.toFixed(2)} บาท`;
+        topGraph.appendChild(barLabel);
+        topGraph.appendChild(bar);
     });
 
     function renderSlip(tx){
@@ -153,6 +190,14 @@ async function fetchTransactions(){
         cell.appendChild(btnApprove); cell.appendChild(btnCancel);
     });
 
+    function renderSlipApproved(tx){
+        if(tx.slip_filename){
+            return `<a href="/slip/${tx.slip_filename}" target="_blank">ดูรูป</a>`;
+        } else {
+            return "-";
+        }
+    }
+
     let approvedBody=document.querySelector("#approved-orders-table tbody");
     approvedBody.innerHTML="";
     data.approved_orders.forEach(tx=>{
@@ -166,15 +211,11 @@ async function fetchTransactions(){
         row.insertCell(6).innerText=tx.approver_name || "-";
         row.insertCell(7).innerText=tx.approved_time_str || "-";
         row.insertCell(8).innerText=tx.customer_user || "-";
-        row.insertCell(9).innerHTML=tx.slip_filename ? `<a href="/slip/${tx.slip_filename}" target="_blank">ดูรูป</a>` : "-";
+        row.insertCell(9).innerHTML=renderSlipApproved(tx);
 
         let restoreBtn=document.createElement("button");
         restoreBtn.className="restore"; restoreBtn.innerText="คืนเป็น New";
-        restoreBtn.onclick=async ()=>{
-            if(!confirm("คุณแน่ใจว่าจะคืนรายการนี้เป็น New?")) return;
-            await fetch("/restore",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({id:tx.id})});
-            fetchTransactions();
-        };
+        restoreBtn.onclick=async ()=>{if(!confirm("คุณแน่ใจว่าจะคืนรายการนี้เป็น New?")) return;await fetch("/restore",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({id:tx.id})});fetchTransactions();};
         row.insertCell(10).appendChild(restoreBtn);
     });
 
@@ -190,34 +231,12 @@ async function fetchTransactions(){
         row.insertCell(5).innerText=tx.bank || "-";
         row.insertCell(6).innerText=tx.canceler_name || "-";
         row.insertCell(7).innerText=tx.cancelled_time_str || "-";
-        row.insertCell(8).innerHTML=tx.slip_filename ? `<a href="/slip/${tx.slip_filename}" target="_blank">ดูรูป</a>` : "-";
+        row.insertCell(8).innerHTML=renderSlipApproved(tx);
 
         let restoreBtn=document.createElement("button");
         restoreBtn.className="restore"; restoreBtn.innerText="คืนเป็น New";
-        restoreBtn.onclick=async ()=>{
-            if(!confirm("คุณแน่ใจว่าจะคืนรายการนี้เป็น New?")) return;
-            await fetch("/restore",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({id:tx.id})});
-            fetchTransactions();
-        };
+        restoreBtn.onclick=async ()=>{if(!confirm("คุณแน่ใจว่าจะคืนรายการนี้เป็น New?")) return;await fetch("/restore",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({id:tx.id})});fetchTransactions();};
         row.insertCell(9).appendChild(restoreBtn);
-    });
-
-    // ------------------ Top5 Chart ------------------
-    let top5Data = data.top5_summary;
-    let ctx = document.getElementById("top5-chart").getContext("2d");
-    let labels = Object.keys(top5Data).sort();
-    let datasets=[];
-    labels.forEach(day=>{
-        top5Data[day].forEach((d,i)=>{
-            if(!datasets[i]) datasets[i]={label:d.user,data:[],backgroundColor:'rgba(40,167,69,0.6)'};
-            datasets[i].data.push(d.amount/100);
-        });
-    });
-    if(top5Chart) top5Chart.destroy();
-    top5Chart = new Chart(ctx,{
-        type:'bar',
-        data:{labels:labels,datasets:datasets},
-        options:{indexAxis:'y',responsive:true,plugins:{legend:{position:'bottom'}},scales:{x:{title:{display:true,text:'จำนวนเงิน (บาท)'}},y:{title:{display:true,text:'วัน'}}}}
     });
 }
 
