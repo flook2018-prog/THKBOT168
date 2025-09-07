@@ -1,7 +1,7 @@
 from flask import Flask, request, jsonify, render_template, send_from_directory
 import os, json, jwt, random
 from datetime import datetime, timedelta
-from collections import defaultdict, Counter
+from collections import defaultdict
 from werkzeug.utils import secure_filename
 import pytz
 
@@ -15,12 +15,12 @@ app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
 transactions = {"new": [], "approved": [], "cancelled": []}
 daily_summary_history = defaultdict(float)
 ip_approver_map = {}
-customer_user_memory = defaultdict(list)  # จดจำยูสลูกค้า per day
 
 DATA_FILE = "transactions_data.json"
 LOG_FILE = "transactions.log"
 SECRET_KEY = "f557ff6589e6d075581d68df1d4f3af7"
 
+# กำหนด timezone
 TZ = pytz.timezone("Asia/Bangkok")
 
 BANK_MAP_TH = {
@@ -37,15 +37,7 @@ BANK_MAP_TH = {
 # -------------------- Helpers --------------------
 def save_transactions():
     with open(DATA_FILE, "w", encoding="utf-8") as f:
-        json.dump({"transactions": transactions, "customer_user_memory": customer_user_memory}, f, ensure_ascii=False, indent=2)
-
-def load_transactions():
-    global transactions, customer_user_memory
-    if os.path.exists(DATA_FILE):
-        with open(DATA_FILE, "r", encoding="utf-8") as f:
-            data = json.load(f)
-            transactions = data.get("transactions", transactions)
-            customer_user_memory = data.get("customer_user_memory", defaultdict(list))
+        json.dump(transactions, f, ensure_ascii=False, indent=2)
 
 def log_with_time(*args):
     ts = datetime.now(TZ).strftime('%Y-%m-%d %H:%M:%S')
@@ -73,6 +65,12 @@ def fmt_time_local(t):
 def fmt_amount(a):
     return f"{a/100:,.2f}" if isinstance(a,(int,float)) else str(a)
 
+def cleanup_old_transactions():
+    """ลบรายการเก่าเกิน 2 เดือน"""
+    cutoff = datetime.now(TZ) - timedelta(days=60)
+    for key in ["new","approved","cancelled"]:
+        transactions[key] = [tx for tx in transactions[key] if datetime.fromisoformat(tx["time"]) >= cutoff]
+
 # -------------------- Flask Endpoints --------------------
 @app.route("/")
 def index():
@@ -81,14 +79,16 @@ def index():
 
 @app.route("/get_transactions")
 def get_transactions():
-    new_orders = transactions["new"][-50:][::-1]
-    approved_orders = transactions["approved"][-50:][::-1]
-    cancelled_orders = transactions["cancelled"][-50:][::-1]
+    cleanup_old_transactions()
+
+    new_orders = transactions["new"][-20:][::-1]
+    approved_orders = transactions["approved"][-20:][::-1]
+    cancelled_orders = transactions["cancelled"][-20:][::-1]
 
     wallet_daily_total = sum(tx["amount"] for tx in approved_orders)
     wallet_daily_total_str = fmt_amount(wallet_daily_total)
 
-    # ฟอร์แมตเวลา
+    # ฟอร์แมตเวลาเป็น Asia/Bangkok
     for tx in new_orders:
         tx["time_str"] = fmt_time_local(tx.get("time"))
     for tx in approved_orders:
@@ -98,30 +98,12 @@ def get_transactions():
         tx["time_str"] = fmt_time_local(tx.get("time"))
         tx["cancelled_time_str"] = fmt_time_local(tx.get("cancelled_time"))
 
-    # สรุปยอดสูงสุด Top 5 per day
-    top5_per_day = defaultdict(list)
-    for tx in approved_orders:
-        user = tx.get("customer_user")
-        if user and user.startswith("thk") and user[3:].isdigit():
-            day = tx["time"][:10] if isinstance(tx["time"], str) else tx["time"].strftime("%Y-%m-%d")
-            top5_per_day[day].append((user, tx["amount"]))
-
-    # aggregate top per day
-    top5_summary = {}
-    for day, lst in top5_per_day.items():
-        counter = defaultdict(int)
-        for u, amt in lst:
-            counter[u] += amt
-        sorted_top = sorted(counter.items(), key=lambda x: x[1], reverse=True)[:5]
-        top5_summary[day] = [{"user": u, "amount": a, "amount_str": fmt_amount(a)} for u,a in sorted_top]
-
     return jsonify({
         "new_orders": new_orders,
         "approved_orders": approved_orders,
         "cancelled_orders": cancelled_orders,
         "wallet_daily_total": wallet_daily_total_str,
-        "daily_summary": [{"date": d, "total": fmt_amount(v)} for d,v in sorted(daily_summary_history.items())],
-        "top5_summary": top5_summary
+        "daily_summary": [{"date": d, "total": fmt_amount(v)} for d,v in sorted(daily_summary_history.items())]
     })
 
 # -------------------- Approve / Cancel / Restore --------------------
@@ -139,15 +121,13 @@ def approve():
             tx["status"] = "approved"
             tx["approver_name"] = approver_name
             tx["approved_time"] = datetime.utcnow().isoformat()
-            tx["customer_user"] = customer_user
+            if customer_user and customer_user.startswith("thk") and customer_user[3:].isdigit():
+                tx["customer_user"] = customer_user
             transactions["approved"].append(tx)
             transactions["new"].remove(tx)
             day = tx["time"][:10] if isinstance(tx["time"], str) else tx["time"].strftime("%Y-%m-%d")
             daily_summary_history[day] += tx["amount"]
-            # memory
-            if customer_user.startswith("thk") and customer_user[3:].isdigit():
-                customer_user_memory[day].append((customer_user, tx["amount"]))
-            log_with_time(f"[APPROVED] {txid} by {approver_name} ({user_ip}) for customer {customer_user}")
+            log_with_time(f"[APPROVED] {txid} by {approver_name} ({user_ip}) for customer {tx.get('customer_user','-')}")
             break
     save_transactions()
     return jsonify({"status": "success"}), 200
@@ -235,8 +215,6 @@ def truewallet_webhook():
         else:
             decoded = data
 
-        log_with_time("[WEBHOOK RAW DATA]", decoded)
-
         txid = decoded.get("transaction_id") or f"TX{len(transactions['new'])+len(transactions['approved'])+len(transactions['cancelled'])+1}"
         if any(tx["id"] == txid for lst in transactions.values() for tx in lst):
             return jsonify({"status":"success","message":"Transaction exists"}), 200
@@ -244,7 +222,7 @@ def truewallet_webhook():
         amount = int(decoded.get("amount",0))
         sender_name = decoded.get("sender_name","-")
         sender_mobile = decoded.get("sender_mobile","-")
-        name = f"{sender_name} / {sender_mobile}" if sender_mobile and sender_mobile!="-” else sender_name
+        name = f"{sender_name} / {sender_mobile}" if sender_mobile and sender_mobile != "-" else sender_name
         event_type = decoded.get("event_type","ฝาก").upper()
         bank_code = (decoded.get("channel") or "").upper()
 
@@ -310,5 +288,4 @@ def get_slip(filename):
 
 # -------------------- Run App --------------------
 if __name__=="__main__":
-    load_transactions()
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT",8080)), debug=True)
