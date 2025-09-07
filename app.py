@@ -1,7 +1,7 @@
 from flask import Flask, request, jsonify, render_template, send_from_directory
-import os, json, random
+import os, json, jwt, random
 from datetime import datetime, timedelta
-from collections import defaultdict
+from collections import defaultdict, Counter
 from werkzeug.utils import secure_filename
 import pytz
 
@@ -15,11 +15,12 @@ app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
 transactions = {"new": [], "approved": [], "cancelled": []}
 daily_summary_history = defaultdict(float)
 ip_approver_map = {}
+customer_user_memory = defaultdict(list)  # จดจำยูสลูกค้า per day
 
 DATA_FILE = "transactions_data.json"
 LOG_FILE = "transactions.log"
+SECRET_KEY = "f557ff6589e6d075581d68df1d4f3af7"
 
-# กำหนด timezone
 TZ = pytz.timezone("Asia/Bangkok")
 
 BANK_MAP_TH = {
@@ -36,7 +37,15 @@ BANK_MAP_TH = {
 # -------------------- Helpers --------------------
 def save_transactions():
     with open(DATA_FILE, "w", encoding="utf-8") as f:
-        json.dump(transactions, f, ensure_ascii=False, indent=2)
+        json.dump({"transactions": transactions, "customer_user_memory": customer_user_memory}, f, ensure_ascii=False, indent=2)
+
+def load_transactions():
+    global transactions, customer_user_memory
+    if os.path.exists(DATA_FILE):
+        with open(DATA_FILE, "r", encoding="utf-8") as f:
+            data = json.load(f)
+            transactions = data.get("transactions", transactions)
+            customer_user_memory = data.get("customer_user_memory", defaultdict(list))
 
 def log_with_time(*args):
     ts = datetime.now(TZ).strftime('%Y-%m-%d %H:%M:%S')
@@ -64,32 +73,22 @@ def fmt_time_local(t):
 def fmt_amount(a):
     return f"{a/100:,.2f}" if isinstance(a,(int,float)) else str(a)
 
-def remove_old_transactions(months=2):
-    threshold = datetime.now(TZ) - timedelta(days=months*30)
-    for key in transactions:
-        old_items = [tx for tx in transactions[key] if datetime.fromisoformat(tx["time"]).astimezone(TZ) < threshold]
-        if old_items:
-            log_with_time(f"[REMOVE OLD {key.upper()}] count={len(old_items)}")
-            transactions[key] = [tx for tx in transactions[key] if datetime.fromisoformat(tx["time"]).astimezone(TZ) >= threshold]
-    save_transactions()
-
 # -------------------- Flask Endpoints --------------------
 @app.route("/")
 def index():
     user_ip = request.remote_addr or "unknown"
-    remove_old_transactions()  # ลบรายการเก่าที่มากกว่า 2 เดือน
     return render_template("index.html", user_ip=user_ip)
 
 @app.route("/get_transactions")
 def get_transactions():
-    new_orders = transactions["new"][-20:][::-1]
-    approved_orders = transactions["approved"][-20:][::-1]
-    cancelled_orders = transactions["cancelled"][-20:][::-1]
+    new_orders = transactions["new"][-50:][::-1]
+    approved_orders = transactions["approved"][-50:][::-1]
+    cancelled_orders = transactions["cancelled"][-50:][::-1]
 
     wallet_daily_total = sum(tx["amount"] for tx in approved_orders)
     wallet_daily_total_str = fmt_amount(wallet_daily_total)
 
-    # ฟอร์แมตเวลาเป็น Asia/Bangkok
+    # ฟอร์แมตเวลา
     for tx in new_orders:
         tx["time_str"] = fmt_time_local(tx.get("time"))
     for tx in approved_orders:
@@ -99,12 +98,30 @@ def get_transactions():
         tx["time_str"] = fmt_time_local(tx.get("time"))
         tx["cancelled_time_str"] = fmt_time_local(tx.get("cancelled_time"))
 
+    # สรุปยอดสูงสุด Top 5 per day
+    top5_per_day = defaultdict(list)
+    for tx in approved_orders:
+        user = tx.get("customer_user")
+        if user and user.startswith("thk") and user[3:].isdigit():
+            day = tx["time"][:10] if isinstance(tx["time"], str) else tx["time"].strftime("%Y-%m-%d")
+            top5_per_day[day].append((user, tx["amount"]))
+
+    # aggregate top per day
+    top5_summary = {}
+    for day, lst in top5_per_day.items():
+        counter = defaultdict(int)
+        for u, amt in lst:
+            counter[u] += amt
+        sorted_top = sorted(counter.items(), key=lambda x: x[1], reverse=True)[:5]
+        top5_summary[day] = [{"user": u, "amount": a, "amount_str": fmt_amount(a)} for u,a in sorted_top]
+
     return jsonify({
         "new_orders": new_orders,
         "approved_orders": approved_orders,
         "cancelled_orders": cancelled_orders,
         "wallet_daily_total": wallet_daily_total_str,
-        "daily_summary": [{"date": d, "total": fmt_amount(v)} for d,v in sorted(daily_summary_history.items())]
+        "daily_summary": [{"date": d, "total": fmt_amount(v)} for d,v in sorted(daily_summary_history.items())],
+        "top5_summary": top5_summary
     })
 
 # -------------------- Approve / Cancel / Restore --------------------
@@ -127,6 +144,9 @@ def approve():
             transactions["new"].remove(tx)
             day = tx["time"][:10] if isinstance(tx["time"], str) else tx["time"].strftime("%Y-%m-%d")
             daily_summary_history[day] += tx["amount"]
+            # memory
+            if customer_user.startswith("thk") and customer_user[3:].isdigit():
+                customer_user_memory[day].append((customer_user, tx["amount"]))
             log_with_time(f"[APPROVED] {txid} by {approver_name} ({user_ip}) for customer {customer_user}")
             break
     save_transactions()
@@ -204,18 +224,29 @@ def truewallet_webhook():
             log_with_time("[WEBHOOK ERROR] No JSON received")
             return jsonify({"status":"error","message":"No JSON received"}), 400
 
-        log_with_time("[WEBHOOK DEBUG] received data:", data)
+        message_jwt = data.get("message")
+        decoded = {}
+        if message_jwt:
+            try:
+                decoded = jwt.decode(message_jwt, SECRET_KEY, algorithms=["HS256"])
+            except Exception as e:
+                log_with_time("[JWT ERROR]", str(e))
+                return jsonify({"status":"error","message":"Invalid JWT"}), 400
+        else:
+            decoded = data
 
-        txid = data.get("transaction_id") or f"TX{len(transactions['new'])+len(transactions['approved'])+len(transactions['cancelled'])+1}"
+        log_with_time("[WEBHOOK RAW DATA]", decoded)
+
+        txid = decoded.get("transaction_id") or f"TX{len(transactions['new'])+len(transactions['approved'])+len(transactions['cancelled'])+1}"
         if any(tx["id"] == txid for lst in transactions.values() for tx in lst):
             return jsonify({"status":"success","message":"Transaction exists"}), 200
 
-        amount = int(data.get("amount",0))
-        sender_name = data.get("sender_name","-")
-        sender_mobile = data.get("sender_mobile","-")
-        name = f"{sender_name} / {sender_mobile}" if sender_mobile else sender_name
-        event_type = data.get("event_type","ฝาก").upper()
-        bank_code = (data.get("channel") or "").upper()
+        amount = int(decoded.get("amount",0))
+        sender_name = decoded.get("sender_name","-")
+        sender_mobile = decoded.get("sender_mobile","-")
+        name = f"{sender_name} / {sender_mobile}" if sender_mobile and sender_mobile!="-” else sender_name
+        event_type = decoded.get("event_type","ฝาก").upper()
+        bank_code = (decoded.get("channel") or "").upper()
 
         if event_type=="P2P" or bank_code in ["TRUEWALLET","WALLET"]:
             bank_name_th="ทรูวอเลท"
@@ -226,7 +257,8 @@ def truewallet_webhook():
         else:
             bank_name_th="-"
 
-        time_str = data.get("received_time") or datetime.utcnow().isoformat()
+        # แปลงเวลาที่ได้รับเป็น UTC ก่อนเก็บ
+        time_str = decoded.get("received_time") or datetime.utcnow().isoformat()
         try:
             tx_time_utc = datetime.fromisoformat(time_str)
         except:
@@ -244,11 +276,9 @@ def truewallet_webhook():
             "slip_filename": None
         }
 
-        log_with_time("[WEBHOOK DEBUG] append transaction:", tx)
         transactions["new"].append(tx)
         save_transactions()
-        log_with_time("[WEBHOOK SUCCESS] Transaction appended")
-
+        log_with_time("[WEBHOOK RECEIVED]", tx)
         return jsonify({"status":"success"}), 200
 
     except Exception as e:
@@ -280,4 +310,5 @@ def get_slip(filename):
 
 # -------------------- Run App --------------------
 if __name__=="__main__":
+    load_transactions()
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT",8080)), debug=True)
