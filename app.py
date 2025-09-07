@@ -38,6 +38,12 @@ def save_transactions():
     with open(DATA_FILE, "w", encoding="utf-8") as f:
         json.dump(transactions, f, ensure_ascii=False, indent=2)
 
+def load_transactions():
+    global transactions
+    if os.path.exists(DATA_FILE):
+        with open(DATA_FILE, "r", encoding="utf-8") as f:
+            transactions.update(json.load(f))
+
 def log_with_time(*args):
     ts = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
     msg = f"[{ts}] " + " ".join(str(a) for a in args)
@@ -77,6 +83,7 @@ def get_transactions():
     wallet_daily_total = sum(tx["amount"] for tx in approved_orders)
     wallet_daily_total_str = fmt_amount(wallet_daily_total)
 
+    # เพิ่มฟอร์แมตเวลาอนุมัติ / ยกเลิก
     for tx in approved_orders:
         tx["approved_time_str"] = tx.get("approved_time") or "-"
     for tx in cancelled_orders:
@@ -154,29 +161,99 @@ def restore():
     save_transactions()
     return jsonify({"status": "success"}), 200
 
-# -------------------- Upload / View Slip --------------------
+# -------------------- Reset --------------------
+@app.route("/reset_approved", methods=["POST"])
+def reset_approved():
+    for tx in transactions["approved"]:
+        tx["status"] = "new"
+        tx.pop("approver_name", None)
+        tx.pop("approved_time", None)
+        tx.pop("customer_user", None)
+        transactions["new"].append(tx)
+    transactions["approved"].clear()
+    save_transactions()
+    return jsonify({"status": "success"}), 200
+
+@app.route("/reset_cancelled", methods=["POST"])
+def reset_cancelled():
+    for tx in transactions["cancelled"]:
+        tx["status"] = "new"
+        tx.pop("canceler_name", None)
+        tx.pop("cancelled_time", None)
+        transactions["new"].append(tx)
+    transactions["cancelled"].clear()
+    save_transactions()
+    return jsonify({"status": "success"}), 200
+
+# -------------------- Webhook TrueWallet --------------------
+@app.route("/truewallet/webhook", methods=["POST"])
+def truewallet_webhook():
+    try:
+        data = request.get_json(force=True, silent=True)
+        if not data:
+            log_with_time("[WEBHOOK ERROR] No JSON received")
+            return jsonify({"status":"error","message":"No JSON received"}), 400
+
+        message_jwt = data.get("message")
+        decoded = {}
+        if message_jwt:
+            try:
+                decoded = jwt.decode(message_jwt, SECRET_KEY, algorithms=["HS256"])
+            except Exception as e:
+                log_with_time("[JWT ERROR]", str(e))
+                return jsonify({"status":"error","message":"Invalid JWT"}), 400
+        else:
+            decoded = data
+
+        txid = decoded.get("transaction_id") or f"TX{len(transactions['new'])+len(transactions['approved'])+len(transactions['cancelled'])+1}"
+        if any(tx["id"] == txid for lst in transactions.values() for tx in lst):
+            return jsonify({"status":"success","message":"Transaction exists"}), 200
+
+        tx = {
+            "id": txid,
+            "event": decoded.get("event","เติมเงิน"),
+            "amount": int(decoded.get("amount",0)),
+            "amount_str": fmt_amount(int(decoded.get("amount",0))),
+            "name": decoded.get("name"),
+            "time": fmt_time(decoded.get("time", datetime.utcnow())),
+            "time_str": fmt_time(decoded.get("time", datetime.utcnow())),
+            "bank": BANK_MAP_TH.get(decoded.get("bank"), decoded.get("bank","-")),
+            "slip_filename": decoded.get("slip_filename")
+        }
+        transactions["new"].append(tx)
+        log_with_time("[NEW ORDER]", txid, tx)
+        save_transactions()
+        return jsonify({"status":"success"}), 200
+    except Exception as e:
+        log_with_time("[WEBHOOK ERROR]", str(e))
+        return jsonify({"status":"error","message":str(e)}), 500
+
+# -------------------- Upload Slip --------------------
 @app.route("/upload_slip/<txid>", methods=["POST"])
 def upload_slip(txid):
-    if "file" not in request.files:
-        return jsonify({"status":"error","message":"No file part"}), 400
-    file = request.files["file"]
-    if file.filename=="":
-        return jsonify({"status":"error","message":"No selected file"}), 400
+    if 'file' not in request.files:
+        return jsonify({"status":"error","message":"No file uploaded"}), 400
+    file = request.files['file']
+    if file.filename == '':
+        return jsonify({"status":"error","message":"Empty filename"}), 400
     filename = f"{txid}_{secure_filename(file.filename)}"
-    file.save(os.path.join(app.config["UPLOAD_FOLDER"], filename))
-
-    for lst in [transactions["new"], transactions["approved"], transactions["cancelled"]]:
+    path = os.path.join(app.config['UPLOAD_FOLDER'], filename)
+    file.save(path)
+    # เก็บชื่อไฟล์ไว้ในรายการ
+    for lst in transactions.values():
         for tx in lst:
-            if tx["id"]==txid:
+            if tx["id"] == txid:
                 tx["slip_filename"] = filename
-                break
     save_transactions()
-    return jsonify({"status":"success","filename":filename})
+    log_with_time(f"[UPLOAD SLIP] {txid} -> {filename}")
+    return jsonify({"status":"success"}), 200
 
 @app.route("/slip/<filename>")
-def get_slip(filename):
-    return send_from_directory(app.config["UPLOAD_FOLDER"], filename)
+def serve_slip(filename):
+    return send_from_directory(app.config['UPLOAD_FOLDER'], filename)
 
-# -------------------- Run App --------------------
-if __name__=="__main__":
+# -------------------- Init --------------------
+load_transactions()
+
+if __name__ == "__main__":
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT",8080)), debug=True)
