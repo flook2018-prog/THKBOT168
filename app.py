@@ -1,6 +1,6 @@
 from flask import Flask, request, jsonify, render_template, send_from_directory
 from flask_sqlalchemy import SQLAlchemy
-import os, json, jwt, random
+import os, jwt, random
 from datetime import datetime
 from collections import defaultdict
 from werkzeug.utils import secure_filename
@@ -12,9 +12,11 @@ app.config['SQLALCHEMY_DATABASE_URI'] = os.environ.get(
     "DATABASE_URL",
     "postgresql://postgres:TzfCyZkvUbFomVpqfRMMeQppGvBjxths@postgres.railway.internal:5432/railway"
 )
+app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 app.config['UPLOAD_FOLDER'] = "uploads"
 os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
 
+# -------------------- Init DB --------------------
 db = SQLAlchemy(app)
 
 # -------------------- DB Models --------------------
@@ -32,8 +34,6 @@ class Transaction(db.Model):
     cancelled_time_str = db.Column(db.String)
     customer_user = db.Column(db.String)
     slip_filename = db.Column(db.String)
-
-db.create_all()
 
 # -------------------- IP -> Name --------------------
 ip_approver_map = {}
@@ -75,13 +75,11 @@ def get_transactions():
     for tx in approved_orders:
         tx['amount_str'] = fmt_amount(tx['amount'])
         tx['approved_time_str'] = tx.get('approved_time_str') or "-"
-
     for tx in new_orders+cancelled_orders:
         tx['amount_str'] = fmt_amount(tx['amount'])
     for tx in cancelled_orders:
         tx['cancelled_time_str'] = tx.get('cancelled_time_str') or "-"
 
-    # daily summary
     daily_summary = defaultdict(int)
     for tx in approved_orders:
         day = tx['time_str'][:10]
@@ -166,7 +164,8 @@ def truewallet_webhook():
     if message_jwt:
         try:
             decoded = jwt.decode(message_jwt, app.config['SECRET_KEY'], algorithms=["HS256"])
-        except:
+        except Exception as e:
+            print("JWT ERROR:", e)
             return jsonify({"status":"error","message":"Invalid JWT"}),400
     else:
         decoded = data
@@ -191,7 +190,7 @@ def truewallet_webhook():
     db.session.commit()
     return jsonify({"status":"success"}),200
 
-# -------------------- Upload Slip --------------------
+# -------------------- Upload / View Slip --------------------
 @app.route("/upload_slip/<txid>", methods=["POST"])
 def upload_slip(txid):
     tx = Transaction.query.get(txid)
@@ -211,4 +210,9 @@ def serve_slip(filename):
 
 # -------------------- Run --------------------
 if __name__=="__main__":
-    app.run(host="0.0.0.0", port=int(os.environ.get("PORT",8080)), debug=True)
+    try:
+        db.create_all()
+        print("DB connected successfully!")
+    except Exception as e:
+        print("DB connection failed:", e)
+    app.run(host="0.0.0.0", port=int(os.environ.get("PORT",8080)), debug=False)
