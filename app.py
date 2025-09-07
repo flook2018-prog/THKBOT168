@@ -20,9 +20,20 @@ DATA_FILE = "transactions_data.json"
 LOG_FILE = "transactions.log"
 SECRET_KEY = "f557ff6589e6d075581d68df1d4f3af7"
 
-# ใช้ timezone Bangkok
+# -------------------- Timezone --------------------
 TZ = pytz.timezone("Asia/Bangkok")
 
+def fmt_time_local(dt):
+    if isinstance(dt, str):
+        try:
+            dt = datetime.fromisoformat(dt)
+        except:
+            dt = datetime.utcnow()
+    if isinstance(dt, datetime):
+        return dt.astimezone(TZ).strftime("%Y-%m-%d %H:%M:%S")
+    return str(dt)
+
+# -------------------- Bank Mapping --------------------
 BANK_MAP_TH = {
     "BBL": "กรุงเทพ",
     "KBANK": "กสิกรไทย",
@@ -50,16 +61,6 @@ def random_english_name():
     names = ["Alice","Bob","Charlie","David","Eve","Frank","Grace","Hannah","Ian","Jack","Kathy","Leo","Mia","Nina","Oscar"]
     return random.choice(names)
 
-def fmt_time(t):
-    if isinstance(t, str):
-        try:
-            return t[:19].replace("T"," ")
-        except:
-            return str(t)
-    elif isinstance(t, datetime):
-        return t.strftime("%Y-%m-%d %H:%M:%S")
-    return str(t)
-
 def fmt_amount(a):
     return f"{a/100:,.2f}" if isinstance(a,(int,float)) else str(a)
 
@@ -78,11 +79,15 @@ def get_transactions():
     wallet_daily_total = sum(tx["amount"] for tx in approved_orders)
     wallet_daily_total_str = fmt_amount(wallet_daily_total)
 
-    # เพิ่มฟอร์แมตเวลาอนุมัติ / ยกเลิก
+    # เพิ่มฟอร์แมตเวลาอนุมัติ / ยกเลิก / รายการใหม่
+    for tx in new_orders:
+        tx["time_str"] = fmt_time_local(tx.get("time"))
     for tx in approved_orders:
-        tx["approved_time_str"] = tx.get("approved_time") or "-"
+        tx["approved_time_str"] = fmt_time_local(tx.get("approved_time"))
+        tx["time_str"] = fmt_time_local(tx.get("time"))
     for tx in cancelled_orders:
-        tx["cancelled_time_str"] = tx.get("cancelled_time") or "-"
+        tx["cancelled_time_str"] = fmt_time_local(tx.get("cancelled_time"))
+        tx["time_str"] = fmt_time_local(tx.get("time"))
 
     return jsonify({
         "new_orders": new_orders,
@@ -106,7 +111,7 @@ def approve():
         if tx["id"] == txid:
             tx["status"] = "approved"
             tx["approver_name"] = approver_name
-            tx["approved_time"] = datetime.now(TZ).strftime("%Y-%m-%d %H:%M:%S")
+            tx["approved_time"] = datetime.utcnow().isoformat()
             tx["customer_user"] = customer_user
             transactions["approved"].append(tx)
             transactions["new"].remove(tx)
@@ -128,7 +133,7 @@ def cancel():
     for tx in transactions["new"]:
         if tx["id"] == txid:
             tx["status"] = "cancelled"
-            tx["cancelled_time"] = datetime.now(TZ).strftime("%Y-%m-%d %H:%M:%S")
+            tx["cancelled_time"] = datetime.utcnow().isoformat()
             tx["canceler_name"] = canceler_name
             transactions["cancelled"].append(tx)
             transactions["new"].remove(tx)
@@ -142,8 +147,8 @@ def restore():
     txid = request.json.get("id")
     for lst in [transactions["approved"], transactions["cancelled"]]:
         for tx in lst:
-            if tx["id"] == txid:
-                tx["status"] = "new"
+            if tx["id"]==txid:
+                tx["status"]="new"
                 tx.pop("approver_name", None)
                 tx.pop("approved_time", None)
                 tx.pop("canceler_name", None)
@@ -154,33 +159,33 @@ def restore():
                 log_with_time(f"[RESTORED] {txid}")
                 break
     save_transactions()
-    return jsonify({"status": "success"}), 200
+    return jsonify({"status":"success"}),200
 
 # -------------------- Reset --------------------
 @app.route("/reset_approved", methods=["POST"])
 def reset_approved():
     for tx in transactions["approved"]:
-        tx["status"] = "new"
+        tx["status"]="new"
         tx.pop("approver_name", None)
         tx.pop("approved_time", None)
         tx.pop("customer_user", None)
         transactions["new"].append(tx)
     transactions["approved"].clear()
     save_transactions()
-    return jsonify({"status": "success"}), 200
+    return jsonify({"status":"success"}),200
 
 @app.route("/reset_cancelled", methods=["POST"])
 def reset_cancelled():
     for tx in transactions["cancelled"]:
-        tx["status"] = "new"
+        tx["status"]="new"
         tx.pop("canceler_name", None)
         tx.pop("cancelled_time", None)
         transactions["new"].append(tx)
     transactions["cancelled"].clear()
     save_transactions()
-    return jsonify({"status": "success"}), 200
+    return jsonify({"status":"success"}),200
 
-# -------------------- Webhook TrueWallet --------------------
+# -------------------- TrueWallet Webhook --------------------
 @app.route("/truewallet/webhook", methods=["POST"])
 def truewallet_webhook():
     try:
@@ -201,7 +206,7 @@ def truewallet_webhook():
             decoded = data
 
         txid = decoded.get("transaction_id") or f"TX{len(transactions['new'])+len(transactions['approved'])+len(transactions['cancelled'])+1}"
-        if any(tx["id"] == txid for lst in transactions.values() for tx in lst):
+        if any(tx["id"]==txid for lst in transactions.values() for tx in lst):
             return jsonify({"status":"success","message":"Transaction exists"}), 200
 
         amount = int(decoded.get("amount",0))
@@ -220,13 +225,11 @@ def truewallet_webhook():
         else:
             bank_name_th="-"
 
-        time_str = decoded.get("received_time") or datetime.now(TZ).isoformat()
+        time_str = decoded.get("received_time") or datetime.utcnow().isoformat()
         try:
-            tx_time = datetime.fromisoformat(time_str)
-            tx_time = tx_time.astimezone(TZ)
-            tx_time_str = tx_time.strftime("%Y-%m-%d %H:%M:%S")
+            tx_time = time_str[:19].replace("T"," ")
         except:
-            tx_time_str = datetime.now(TZ).strftime("%Y-%m-%d %H:%M:%S")
+            tx_time = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
 
         tx = {
             "id": txid,
@@ -236,8 +239,8 @@ def truewallet_webhook():
             "name": name,
             "bank": bank_name_th,
             "status": "new",
-            "time": tx_time_str,
-            "time_str": tx_time_str,
+            "time": tx_time,
+            "time_str": fmt_time_local(tx_time),
             "slip_filename": None
         }
 
@@ -250,7 +253,7 @@ def truewallet_webhook():
         log_with_time("[WEBHOOK EXCEPTION]", str(e))
         return jsonify({"status":"error","message":str(e)}), 500
 
-# -------------------- Upload / View Slip --------------------
+# -------------------- Upload Slip --------------------
 @app.route("/upload_slip/<txid>", methods=["POST"])
 def upload_slip(txid):
     if "file" not in request.files:
@@ -264,7 +267,7 @@ def upload_slip(txid):
     for lst in [transactions["new"], transactions["approved"], transactions["cancelled"]]:
         for tx in lst:
             if tx["id"]==txid:
-                tx["slip_filename"] = filename
+                tx["slip_filename"]=filename
                 break
     save_transactions()
     return jsonify({"status":"success","filename":filename})
