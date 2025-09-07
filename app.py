@@ -1,5 +1,5 @@
 from flask import Flask, request, jsonify, render_template, send_from_directory
-import os, json, jwt, random
+import os, json, random
 from datetime import datetime, timedelta
 from collections import defaultdict
 from werkzeug.utils import secure_filename
@@ -18,9 +18,8 @@ ip_approver_map = {}
 
 DATA_FILE = "transactions_data.json"
 LOG_FILE = "transactions.log"
-SECRET_KEY = "f557ff6589e6d075581d68df1d4f3af7"
 
-# -------------------- Timezone --------------------
+# กำหนด timezone
 TZ = pytz.timezone("Asia/Bangkok")
 
 BANK_MAP_TH = {
@@ -35,22 +34,7 @@ BANK_MAP_TH = {
 }
 
 # -------------------- Helpers --------------------
-def remove_old_transactions():
-    cutoff_date = datetime.now(TZ) - timedelta(days=60)  # ลบรายการเก่ากว่า 2 เดือน
-    for key in ["new", "approved", "cancelled"]:
-        new_list = []
-        for tx in transactions[key]:
-            try:
-                tx_time = datetime.fromisoformat(tx["time"]).astimezone(TZ)
-                if tx_time >= cutoff_date:
-                    new_list.append(tx)
-            except:
-                # ถ้าแปลงเวลาไม่ได้ ให้เก็บไว้ก่อน
-                new_list.append(tx)
-        transactions[key] = new_list
-
 def save_transactions():
-    remove_old_transactions()
     with open(DATA_FILE, "w", encoding="utf-8") as f:
         json.dump(transactions, f, ensure_ascii=False, indent=2)
 
@@ -80,10 +64,20 @@ def fmt_time_local(t):
 def fmt_amount(a):
     return f"{a/100:,.2f}" if isinstance(a,(int,float)) else str(a)
 
+def remove_old_transactions(months=2):
+    threshold = datetime.now(TZ) - timedelta(days=months*30)
+    for key in transactions:
+        old_items = [tx for tx in transactions[key] if datetime.fromisoformat(tx["time"]).astimezone(TZ) < threshold]
+        if old_items:
+            log_with_time(f"[REMOVE OLD {key.upper()}] count={len(old_items)}")
+            transactions[key] = [tx for tx in transactions[key] if datetime.fromisoformat(tx["time"]).astimezone(TZ) >= threshold]
+    save_transactions()
+
 # -------------------- Flask Endpoints --------------------
 @app.route("/")
 def index():
     user_ip = request.remote_addr or "unknown"
+    remove_old_transactions()  # ลบรายการเก่าที่มากกว่า 2 เดือน
     return render_template("index.html", user_ip=user_ip)
 
 @app.route("/get_transactions")
@@ -95,6 +89,7 @@ def get_transactions():
     wallet_daily_total = sum(tx["amount"] for tx in approved_orders)
     wallet_daily_total_str = fmt_amount(wallet_daily_total)
 
+    # ฟอร์แมตเวลาเป็น Asia/Bangkok
     for tx in new_orders:
         tx["time_str"] = fmt_time_local(tx.get("time"))
     for tx in approved_orders:
@@ -209,28 +204,18 @@ def truewallet_webhook():
             log_with_time("[WEBHOOK ERROR] No JSON received")
             return jsonify({"status":"error","message":"No JSON received"}), 400
 
-        message_jwt = data.get("message")
-        decoded = {}
-        if message_jwt:
-            try:
-                decoded = jwt.decode(message_jwt, SECRET_KEY, algorithms=["HS256"])
-            except Exception as e:
-                log_with_time("[JWT ERROR]", str(e))
-                return jsonify({"status":"error","message":"Invalid JWT"}), 400
-        else:
-            decoded = data
+        log_with_time("[WEBHOOK DEBUG] received data:", data)
 
-        txid = decoded.get("transaction_id") or f"TX{len(transactions['new'])+len(transactions['approved'])+len(transactions['cancelled'])+1}"
+        txid = data.get("transaction_id") or f"TX{len(transactions['new'])+len(transactions['approved'])+len(transactions['cancelled'])+1}"
         if any(tx["id"] == txid for lst in transactions.values() for tx in lst):
-            log_with_time("[WEBHOOK] Transaction exists", txid)
             return jsonify({"status":"success","message":"Transaction exists"}), 200
 
-        amount = int(decoded.get("amount",0))
-        sender_name = decoded.get("sender_name","-")
-        sender_mobile = decoded.get("sender_mobile","-")
+        amount = int(data.get("amount",0))
+        sender_name = data.get("sender_name","-")
+        sender_mobile = data.get("sender_mobile","-")
         name = f"{sender_name} / {sender_mobile}" if sender_mobile else sender_name
-        event_type = decoded.get("event_type","ฝาก").upper()
-        bank_code = (decoded.get("channel") or "").upper()
+        event_type = data.get("event_type","ฝาก").upper()
+        bank_code = (data.get("channel") or "").upper()
 
         if event_type=="P2P" or bank_code in ["TRUEWALLET","WALLET"]:
             bank_name_th="ทรูวอเลท"
@@ -241,8 +226,7 @@ def truewallet_webhook():
         else:
             bank_name_th="-"
 
-        # เวลา UTC -> เก็บใน database
-        time_str = decoded.get("received_time") or datetime.utcnow().isoformat()
+        time_str = data.get("received_time") or datetime.utcnow().isoformat()
         try:
             tx_time_utc = datetime.fromisoformat(time_str)
         except:
@@ -260,9 +244,11 @@ def truewallet_webhook():
             "slip_filename": None
         }
 
-        log_with_time("[WEBHOOK RECEIVED]", tx)
+        log_with_time("[WEBHOOK DEBUG] append transaction:", tx)
         transactions["new"].append(tx)
         save_transactions()
+        log_with_time("[WEBHOOK SUCCESS] Transaction appended")
+
         return jsonify({"status":"success"}), 200
 
     except Exception as e:
