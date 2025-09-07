@@ -1,6 +1,6 @@
 from flask import Flask, request, jsonify, render_template, send_from_directory
 import os, json, jwt, random
-from datetime import datetime
+from datetime import datetime, timedelta
 from collections import defaultdict
 from werkzeug.utils import secure_filename
 
@@ -58,10 +58,26 @@ def fmt_time(t):
 def fmt_amount(a):
     return f"{a/100:,.2f}" if isinstance(a,(int,float)) else str(a)
 
+# -------------------- Auto-reset >2 months --------------------
+def auto_reset_old_data():
+    threshold = datetime.utcnow() - timedelta(days=60)
+    for lst_name in ["new","approved","cancelled"]:
+        lst = transactions[lst_name]
+        for tx in lst[:]:
+            try:
+                tx_time = datetime.strptime(tx["time_str"], "%Y-%m-%d %H:%M:%S")
+                if tx_time < threshold:
+                    lst.remove(tx)
+                    log_with_time(f"[AUTO RESET] Removed {tx['id']} from {lst_name}")
+            except:
+                continue
+    save_transactions()
+
 # -------------------- Flask Endpoints --------------------
 @app.route("/")
 def index():
     user_ip = request.remote_addr or "unknown"
+    auto_reset_old_data()
     return render_template("index.html", user_ip=user_ip)
 
 @app.route("/get_transactions")
@@ -87,7 +103,6 @@ def get_transactions():
         "daily_summary": [{"date": d, "total": fmt_amount(v)} for d,v in sorted(daily_summary_history.items())]
     })
 
-# -------------------- Approve / Cancel / Restore / Reset --------------------
 @app.route("/approve", methods=["POST"])
 def approve():
     txid = request.json.get("id")
@@ -101,7 +116,8 @@ def approve():
         if tx["id"] == txid:
             tx["status"] = "approved"
             tx["approver_name"] = approver_name
-            tx["approved_time"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            tx["approved_time"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")  # เวลาไทย
+            tx["approved_time_str"] = tx["approved_time"]
             tx["customer_user"] = customer_user
             transactions["approved"].append(tx)
             transactions["new"].remove(tx)
@@ -124,6 +140,7 @@ def cancel():
         if tx["id"] == txid:
             tx["status"] = "cancelled"
             tx["cancelled_time"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            tx["cancelled_time_str"] = tx["cancelled_time"]
             tx["canceler_name"] = canceler_name
             transactions["cancelled"].append(tx)
             transactions["new"].remove(tx)
@@ -141,8 +158,10 @@ def restore():
                 tx["status"] = "new"
                 tx.pop("approver_name", None)
                 tx.pop("approved_time", None)
+                tx.pop("approved_time_str", None)
                 tx.pop("canceler_name", None)
                 tx.pop("cancelled_time", None)
+                tx.pop("cancelled_time_str", None)
                 tx.pop("customer_user", None)
                 transactions["new"].append(tx)
                 lst.remove(tx)
@@ -157,6 +176,7 @@ def reset_approved():
         tx["status"] = "new"
         tx.pop("approver_name", None)
         tx.pop("approved_time", None)
+        tx.pop("approved_time_str", None)
         tx.pop("customer_user", None)
         transactions["new"].append(tx)
     transactions["approved"].clear()
@@ -169,6 +189,7 @@ def reset_cancelled():
         tx["status"] = "new"
         tx.pop("canceler_name", None)
         tx.pop("cancelled_time", None)
+        tx.pop("cancelled_time_str", None)
         transactions["new"].append(tx)
     transactions["cancelled"].clear()
     save_transactions()
@@ -215,7 +236,7 @@ def truewallet_webhook():
         else:
             bank_name_th="-"
 
-        time_str = decoded.get("received_time") or datetime.now().isoformat()
+        time_str = decoded.get("received_time") or datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         try:
             tx_time = time_str[:19].replace("T"," ")
         except:
