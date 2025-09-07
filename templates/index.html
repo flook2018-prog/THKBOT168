@@ -25,6 +25,8 @@ button.approve:hover{background:#218838}
 button.cancel{background:#dc3545;color:white}
 button.restore{background:#ffc107;color:#333}
 button.restore:hover{background:#e0a800}
+button.upload{background:#17a2b8;color:white}
+button.upload:hover{background:#138496}
 #ip-display{position:absolute;top:10px;right:20px;font-weight:bold;color:#555}
 ::-webkit-scrollbar{width:8px}
 ::-webkit-scrollbar-thumb{background-color:rgba(0,0,0,0.2);border-radius:4px}
@@ -72,7 +74,7 @@ button.restore:hover{background:#e0a800}
       <table id="approved-orders-table">
         <thead>
         <tr><th>ID</th><th>ประเภท</th><th>จำนวน</th><th>ชื่อ/เบอร์</th><th>เวลา</th>
-        <th>ธนาคาร</th><th>ผู้อนุมัติ</th><th>เวลาอนุมัติ</th><th>ยูสเซอร์ลูกค้า</th><th>จัดการ</th></tr>
+        <th>ธนาคาร</th><th>ผู้อนุมัติ</th><th>เวลาอนุมัติ</th><th>ยูสเซอร์ลูกค้า</th><th>สลิป</th><th>คืนเป็น New</th></tr>
         </thead>
         <tbody></tbody>
       </table>
@@ -108,14 +110,13 @@ async function fetchTransactions(){
         row.insertCell(1).innerText=d.total;
     });
 
-    // ------------------ New Orders ------------------
     let newBody = document.querySelector("#new-orders-table tbody");
     newBody.innerHTML="";
     data.new_orders.forEach(tx=>{
         let row=newBody.insertRow();
         row.insertCell(0).innerText=tx.id;
         row.insertCell(1).innerText=tx.event;
-        row.insertCell(2).innerText=tx.amount_str;
+        row.insertCell(2).innerText=tx.amount_str || "-";
         row.insertCell(3).innerText=tx.name || "-";
         row.insertCell(4).innerText=tx.time_str || "-";
         row.insertCell(5).innerText=tx.bank || "-";
@@ -126,27 +127,27 @@ async function fetchTransactions(){
         btnApprove.onclick=async ()=>{
             let customer_user=prompt("กรุณาใส่ยูสเซอร์ลูกค้า เช่น thk101982");
             if(!customer_user) return alert("ต้องใส่ยูสเซอร์ลูกค้าก่อนอนุมัติ");
-            await fetch("/approve",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({id:tx.id,customer_user:customer_user})});
+            await fetch("/approve",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({id:tx.id,customer_user})});
             fetchTransactions();
         };
+
         let btnCancel=document.createElement("button");
         btnCancel.className="cancel"; btnCancel.innerText="ยกเลิก";
         btnCancel.onclick=async ()=>{
             await fetch("/cancel",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({id:tx.id})});
             fetchTransactions();
         };
-        cell.appendChild(btnApprove); 
-        cell.appendChild(btnCancel);
+
+        cell.appendChild(btnApprove); cell.appendChild(btnCancel);
     });
 
-    // ------------------ Approved Orders ------------------
     let approvedBody=document.querySelector("#approved-orders-table tbody");
     approvedBody.innerHTML="";
     data.approved_orders.forEach(tx=>{
         let row=approvedBody.insertRow();
         row.insertCell(0).innerText=tx.id;
         row.insertCell(1).innerText=tx.event;
-        row.insertCell(2).innerText=tx.amount_str;
+        row.insertCell(2).innerText=tx.amount_str || "-";
         row.insertCell(3).innerText=tx.name || "-";
         row.insertCell(4).innerText=tx.time_str || "-";
         row.insertCell(5).innerText=tx.bank || "-";
@@ -154,9 +155,29 @@ async function fetchTransactions(){
         row.insertCell(7).innerText=tx.approved_time_str || "-";
         row.insertCell(8).innerText=tx.customer_user || "-";
 
-        let actionCell = row.insertCell(9);
+        // สลิป
+        let cellSlip=row.insertCell(9);
+        let uploadBtn=document.createElement("button");
+        uploadBtn.className="upload"; uploadBtn.innerText="อัปโหลดสลิป";
+        uploadBtn.onclick=()=>{
+            let fileInput=document.createElement("input");
+            fileInput.type="file";
+            fileInput.onchange=async ()=>{
+                let formData=new FormData();
+                formData.append("file", fileInput.files[0]);
+                await fetch("/upload_slip/"+tx.id,{method:"POST",body:formData});
+                fetchTransactions();
+            };
+            fileInput.click();
+        };
+        cellSlip.appendChild(uploadBtn);
+        if(tx.slip_filename){
+            let viewLink=document.createElement("a");
+            viewLink.href="/uploads/"+tx.slip_filename; viewLink.target="_blank";
+            viewLink.innerText=" ดูสลิป"; viewLink.style.marginLeft="5px";
+            cellSlip.appendChild(viewLink);
+        }
 
-        // ปุ่มคืนเป็น New
         let restoreBtn=document.createElement("button");
         restoreBtn.className="restore"; restoreBtn.innerText="คืนเป็น New";
         restoreBtn.onclick=async ()=>{
@@ -164,46 +185,16 @@ async function fetchTransactions(){
             await fetch("/restore",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({id:tx.id})});
             fetchTransactions();
         };
-        actionCell.appendChild(restoreBtn);
-
-        // ปุ่มอัพโหลดสลิป
-        let uploadBtn = document.createElement("button");
-        uploadBtn.className="approve"; uploadBtn.style.marginLeft="5px"; 
-        uploadBtn.innerText = "อัพโหลดสลิป";
-        uploadBtn.onclick = () => {
-            let fileInput = document.createElement("input");
-            fileInput.type = "file";
-            fileInput.accept = "image/*";
-            fileInput.onchange = async () => {
-                let formData = new FormData();
-                formData.append("file", fileInput.files[0]);
-                let resp = await fetch(`/upload_slip/${tx.id}`, {method:"POST", body:formData});
-                let result = await resp.json();
-                if(result.status=="success") alert("อัพโหลดสลิปเรียบร้อย");
-                fetchTransactions();
-            };
-            fileInput.click();
-        };
-        actionCell.appendChild(uploadBtn);
-
-        // ปุ่มดูสลิป ถ้ามี
-        if(tx.slip_url){
-            let viewBtn = document.createElement("button");
-            viewBtn.className="approve"; viewBtn.style.marginLeft="5px";
-            viewBtn.innerText = "ดูสลิป";
-            viewBtn.onclick = ()=> window.open(`/slip/${tx.id}`, "_blank");
-            actionCell.appendChild(viewBtn);
-        }
+        row.insertCell(10).appendChild(restoreBtn);
     });
 
-    // ------------------ Cancelled Orders ------------------
     let cancelledBody=document.querySelector("#cancelled-orders-table tbody");
     cancelledBody.innerHTML="";
     data.cancelled_orders.forEach(tx=>{
         let row=cancelledBody.insertRow();
         row.insertCell(0).innerText=tx.id;
         row.insertCell(1).innerText=tx.event;
-        row.insertCell(2).innerText=tx.amount_str;
+        row.insertCell(2).innerText=tx.amount_str || "-";
         row.insertCell(3).innerText=tx.name || "-";
         row.insertCell(4).innerText=tx.time_str || "-";
         row.insertCell(5).innerText=tx.bank || "-";
@@ -222,12 +213,12 @@ async function fetchTransactions(){
 
 async function resetApproved(){
     if(!confirm("คุณแน่ใจว่าจะรีเซทรายการที่อนุมัติทั้งหมด?")) return;
-    await fetch("/reset_approved",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({confirm:true})});
+    await fetch("/reset_approved",{method:"POST"});
     fetchTransactions();
 }
 async function resetCancelled(){
     if(!confirm("คุณแน่ใจว่าจะรีเซทรายการที่ยกเลิกทั้งหมด?")) return;
-    await fetch("/reset_cancelled",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({confirm:true})});
+    await fetch("/reset_cancelled",{method:"POST"});
     fetchTransactions();
 }
 
