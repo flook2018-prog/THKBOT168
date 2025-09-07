@@ -1,43 +1,22 @@
 from flask import Flask, request, jsonify, render_template, send_from_directory
-from flask_sqlalchemy import SQLAlchemy
-import os, jwt, random
+import os, json, jwt, random
 from datetime import datetime
 from collections import defaultdict
 from werkzeug.utils import secure_filename
 
-# -------------------- Config --------------------
+UPLOAD_FOLDER = "uploads"
+os.makedirs(UPLOAD_FOLDER, exist_ok=True)
+
 app = Flask(__name__)
-app.config['SECRET_KEY'] = "f557ff6589e6d075581d68df1d4f3af7"
-app.config['SQLALCHEMY_DATABASE_URI'] = os.environ.get(
-    "DATABASE_URL",
-    "postgresql://postgres:TzfCyZkvUbFomVpqfRMMeQppGvBjxths@postgres.railway.internal:5432/railway"
-)
-app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
-app.config['UPLOAD_FOLDER'] = "uploads"
-os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
+app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
 
-# -------------------- Init DB --------------------
-db = SQLAlchemy(app)
-
-# -------------------- DB Models --------------------
-class Transaction(db.Model):
-    id = db.Column(db.String, primary_key=True)
-    event = db.Column(db.String)
-    amount = db.Column(db.Integer)
-    name = db.Column(db.String)
-    time_str = db.Column(db.String)
-    bank = db.Column(db.String)
-    status = db.Column(db.String, default="new")  # new, approved, cancelled
-    approver_name = db.Column(db.String)
-    approved_time_str = db.Column(db.String)
-    canceler_name = db.Column(db.String)
-    cancelled_time_str = db.Column(db.String)
-    customer_user = db.Column(db.String)
-    slip_filename = db.Column(db.String)
-
-# -------------------- IP -> Name --------------------
+transactions = {"new": [], "approved": [], "cancelled": []}
+daily_summary_history = defaultdict(float)
 ip_approver_map = {}
-names_list = ["Alice","Bob","Charlie","David","Eve","Frank","Grace","Hannah","Ian","Jack","Kathy","Leo","Mia","Nina","Oscar"]
+
+DATA_FILE = "transactions_data.json"
+LOG_FILE = "transactions.log"
+SECRET_KEY = "f557ff6589e6d075581d68df1d4f3af7"
 
 BANK_MAP_TH = {
     "BBL": "กรุงเทพ",
@@ -50,15 +29,36 @@ BANK_MAP_TH = {
     "7-ELEVEN": "7-Eleven",
 }
 
-def random_name(ip):
-    if ip not in ip_approver_map:
-        ip_approver_map[ip] = random.choice(names_list)
-    return ip_approver_map[ip]
+# -------------------- Helpers --------------------
+def save_transactions():
+    with open(DATA_FILE, "w", encoding="utf-8") as f:
+        json.dump(transactions, f, ensure_ascii=False, indent=2)
+
+def log_with_time(*args):
+    ts = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    msg = f"[{ts}] " + " ".join(str(a) for a in args)
+    print(msg, flush=True)
+    with open(LOG_FILE, "a", encoding="utf-8") as f:
+        f.write(msg + "\n")
+
+def random_english_name():
+    names = ["Alice","Bob","Charlie","David","Eve","Frank","Grace","Hannah","Ian","Jack","Kathy","Leo","Mia","Nina","Oscar"]
+    return random.choice(names)
+
+def fmt_time(t):
+    if isinstance(t, str):
+        try:
+            return t[:19].replace("T"," ")
+        except:
+            return str(t)
+    elif isinstance(t, datetime):
+        return t.strftime("%Y-%m-%d %H:%M:%S")
+    return str(t)
 
 def fmt_amount(a):
     return f"{a/100:,.2f}" if isinstance(a,(int,float)) else str(a)
 
-# -------------------- Routes --------------------
+# -------------------- Flask Endpoints --------------------
 @app.route("/")
 def index():
     user_ip = request.remote_addr or "unknown"
@@ -66,153 +66,207 @@ def index():
 
 @app.route("/get_transactions")
 def get_transactions():
-    transactions_db = Transaction.query.order_by(Transaction.time_str.desc()).all()
-    new_orders = [tx.__dict__ for tx in transactions_db if tx.status=="new"]
-    approved_orders = [tx.__dict__ for tx in transactions_db if tx.status=="approved"]
-    cancelled_orders = [tx.__dict__ for tx in transactions_db if tx.status=="cancelled"]
+    new_orders = transactions["new"][-20:][::-1]
+    approved_orders = transactions["approved"][-20:][::-1]
+    cancelled_orders = transactions["cancelled"][-20:][::-1]
 
-    wallet_daily_total = sum(tx['amount'] for tx in approved_orders)
+    wallet_daily_total = sum(tx["amount"] for tx in approved_orders)
+    wallet_daily_total_str = fmt_amount(wallet_daily_total)
+
+    # เพิ่มฟอร์แมตเวลาอนุมัติ / ยกเลิก
     for tx in approved_orders:
-        tx['amount_str'] = fmt_amount(tx['amount'])
-        tx['approved_time_str'] = tx.get('approved_time_str') or "-"
-    for tx in new_orders+cancelled_orders:
-        tx['amount_str'] = fmt_amount(tx['amount'])
+        tx["approved_time_str"] = tx.get("approved_time") or "-"
     for tx in cancelled_orders:
-        tx['cancelled_time_str'] = tx.get('cancelled_time_str') or "-"
-
-    daily_summary = defaultdict(int)
-    for tx in approved_orders:
-        day = tx['time_str'][:10]
-        daily_summary[day] += tx['amount']
+        tx["cancelled_time_str"] = tx.get("cancelled_time") or "-"
 
     return jsonify({
         "new_orders": new_orders,
         "approved_orders": approved_orders,
         "cancelled_orders": cancelled_orders,
-        "wallet_daily_total": fmt_amount(wallet_daily_total),
-        "daily_summary": [{"date": d,"total":fmt_amount(v)} for d,v in sorted(daily_summary.items())]
+        "wallet_daily_total": wallet_daily_total_str,
+        "daily_summary": [{"date": d, "total": fmt_amount(v)} for d,v in sorted(daily_summary_history.items())]
     })
 
+# -------------------- Approve / Cancel / Restore / Reset --------------------
 @app.route("/approve", methods=["POST"])
 def approve():
     txid = request.json.get("id")
     customer_user = request.json.get("customer_user")
     user_ip = request.remote_addr or "unknown"
-    approver_name = random_name(user_ip)
+    if user_ip not in ip_approver_map:
+        ip_approver_map[user_ip] = random_english_name()
+    approver_name = ip_approver_map[user_ip]
 
-    tx = Transaction.query.get(txid)
-    if tx and tx.status=="new":
-        tx.status = "approved"
-        tx.approver_name = approver_name
-        tx.approved_time_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        tx.customer_user = customer_user
-        db.session.commit()
-    return jsonify({"status":"success"}),200
+    for tx in transactions["new"]:
+        if tx["id"] == txid:
+            tx["status"] = "approved"
+            tx["approver_name"] = approver_name
+            tx["approved_time"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            tx["customer_user"] = customer_user
+            transactions["approved"].append(tx)
+            transactions["new"].remove(tx)
+            day = tx["time"][:10] if isinstance(tx["time"], str) else tx["time"].strftime("%Y-%m-%d")
+            daily_summary_history[day] += tx["amount"]
+            log_with_time(f"[APPROVED] {txid} by {approver_name} ({user_ip}) for customer {customer_user}")
+            break
+    save_transactions()
+    return jsonify({"status": "success"}), 200
 
 @app.route("/cancel", methods=["POST"])
 def cancel():
     txid = request.json.get("id")
     user_ip = request.remote_addr or "unknown"
-    canceler_name = random_name(user_ip)
+    if user_ip not in ip_approver_map:
+        ip_approver_map[user_ip] = random_english_name()
+    canceler_name = ip_approver_map[user_ip]
 
-    tx = Transaction.query.get(txid)
-    if tx and tx.status=="new":
-        tx.status = "cancelled"
-        tx.canceler_name = canceler_name
-        tx.cancelled_time_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        db.session.commit()
-    return jsonify({"status":"success"}),200
+    for tx in transactions["new"]:
+        if tx["id"] == txid:
+            tx["status"] = "cancelled"
+            tx["cancelled_time"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            tx["canceler_name"] = canceler_name
+            transactions["cancelled"].append(tx)
+            transactions["new"].remove(tx)
+            log_with_time(f"[CANCELLED] {txid} by {canceler_name} ({user_ip})")
+            break
+    save_transactions()
+    return jsonify({"status": "success"}), 200
 
 @app.route("/restore", methods=["POST"])
 def restore():
     txid = request.json.get("id")
-    tx = Transaction.query.get(txid)
-    if tx and tx.status in ["approved","cancelled"]:
-        tx.status="new"
-        tx.approver_name=None
-        tx.approved_time_str=None
-        tx.canceler_name=None
-        tx.cancelled_time_str=None
-        tx.customer_user=None
-        db.session.commit()
-    return jsonify({"status":"success"}),200
+    for lst in [transactions["approved"], transactions["cancelled"]]:
+        for tx in lst:
+            if tx["id"] == txid:
+                tx["status"] = "new"
+                tx.pop("approver_name", None)
+                tx.pop("approved_time", None)
+                tx.pop("canceler_name", None)
+                tx.pop("cancelled_time", None)
+                tx.pop("customer_user", None)
+                transactions["new"].append(tx)
+                lst.remove(tx)
+                log_with_time(f"[RESTORED] {txid}")
+                break
+    save_transactions()
+    return jsonify({"status": "success"}), 200
 
 @app.route("/reset_approved", methods=["POST"])
 def reset_approved():
-    for tx in Transaction.query.filter_by(status="approved").all():
-        tx.status="new"
-        tx.approver_name=None
-        tx.approved_time_str=None
-        tx.customer_user=None
-    db.session.commit()
-    return jsonify({"status":"success"}),200
+    for tx in transactions["approved"]:
+        tx["status"] = "new"
+        tx.pop("approver_name", None)
+        tx.pop("approved_time", None)
+        tx.pop("customer_user", None)
+        transactions["new"].append(tx)
+    transactions["approved"].clear()
+    save_transactions()
+    return jsonify({"status": "success"}), 200
 
 @app.route("/reset_cancelled", methods=["POST"])
 def reset_cancelled():
-    for tx in Transaction.query.filter_by(status="cancelled").all():
-        tx.status="new"
-        tx.canceler_name=None
-        tx.cancelled_time_str=None
-    db.session.commit()
-    return jsonify({"status":"success"}),200
+    for tx in transactions["cancelled"]:
+        tx["status"] = "new"
+        tx.pop("canceler_name", None)
+        tx.pop("cancelled_time", None)
+        transactions["new"].append(tx)
+    transactions["cancelled"].clear()
+    save_transactions()
+    return jsonify({"status": "success"}), 200
 
+# -------------------- Webhook TrueWallet --------------------
 @app.route("/truewallet/webhook", methods=["POST"])
 def truewallet_webhook():
-    data = request.get_json(force=True)
-    message_jwt = data.get("message")
-    decoded = {}
-    if message_jwt:
+    try:
+        data = request.get_json(force=True, silent=True)
+        if not data:
+            log_with_time("[WEBHOOK ERROR] No JSON received")
+            return jsonify({"status":"error","message":"No JSON received"}), 400
+
+        message_jwt = data.get("message")
+        decoded = {}
+        if message_jwt:
+            try:
+                decoded = jwt.decode(message_jwt, SECRET_KEY, algorithms=["HS256"])
+            except Exception as e:
+                log_with_time("[JWT ERROR]", str(e))
+                return jsonify({"status":"error","message":"Invalid JWT"}), 400
+        else:
+            decoded = data
+
+        txid = decoded.get("transaction_id") or f"TX{len(transactions['new'])+len(transactions['approved'])+len(transactions['cancelled'])+1}"
+        if any(tx["id"] == txid for lst in transactions.values() for tx in lst):
+            return jsonify({"status":"success","message":"Transaction exists"}), 200
+
+        amount = int(decoded.get("amount",0))
+        sender_name = decoded.get("sender_name","-")
+        sender_mobile = decoded.get("sender_mobile","-")
+        name = f"{sender_name} / {sender_mobile}" if sender_mobile else sender_name
+        event_type = decoded.get("event_type","ฝาก").upper()
+        bank_code = (decoded.get("channel") or "").upper()
+
+        # ธนาคารไทย
+        if event_type=="P2P" or bank_code in ["TRUEWALLET","WALLET"]:
+            bank_name_th="ทรูวอเลท"
+        elif bank_code in BANK_MAP_TH:
+            bank_name_th=BANK_MAP_TH[bank_code]
+        elif bank_code:
+            bank_name_th=bank_code
+        else:
+            bank_name_th="-"
+
+        time_str = decoded.get("received_time") or datetime.now().isoformat()
         try:
-            decoded = jwt.decode(message_jwt, app.config['SECRET_KEY'], algorithms=["HS256"])
-        except Exception as e:
-            print("JWT ERROR:", e)
-            return jsonify({"status":"error","message":"Invalid JWT"}),400
-    else:
-        decoded = data
+            tx_time = time_str[:19].replace("T"," ")
+        except:
+            tx_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
-    txid = decoded.get("transaction_id") or f"TX{random.randint(1000,9999)}"
-    if Transaction.query.get(txid):
-        return jsonify({"status":"success","message":"exists"}),200
+        tx = {
+            "id": txid,
+            "event": event_type,
+            "amount": amount,
+            "amount_str": f"{amount/100:,.2f}",
+            "name": name,
+            "bank": bank_name_th,
+            "status": "new",
+            "time": tx_time,
+            "time_str": tx_time,
+            "slip_filename": None
+        }
 
-    amount = int(decoded.get("amount",0))
-    sender_name = decoded.get("sender_name","-")
-    sender_mobile = decoded.get("sender_mobile","-")
-    name = f"{sender_name} / {sender_mobile}" if sender_mobile else sender_name
-    event_type = decoded.get("event_type","ฝาก").upper()
-    bank_code = (decoded.get("channel") or "").upper()
-    bank_name_th = BANK_MAP_TH.get(bank_code, bank_code or "-")
+        transactions["new"].append(tx)
+        save_transactions()
+        log_with_time("[WEBHOOK RECEIVED]", tx)
+        return jsonify({"status":"success"}), 200
 
-    time_str = decoded.get("received_time") or datetime.now().isoformat()
-    tx_time = time_str[:19].replace("T"," ")
+    except Exception as e:
+        log_with_time("[WEBHOOK EXCEPTION]", str(e))
+        return jsonify({"status":"error","message":str(e)}), 500
 
-    tx = Transaction(id=txid,event=event_type,amount=amount,name=name,time_str=tx_time,bank=bank_name_th)
-    db.session.add(tx)
-    db.session.commit()
-    return jsonify({"status":"success"}),200
-
-# -------------------- Upload / View Slip --------------------
+# -------------------- Upload Slip --------------------
 @app.route("/upload_slip/<txid>", methods=["POST"])
 def upload_slip(txid):
-    tx = Transaction.query.get(txid)
-    if not tx: return "Not found",404
-    file = request.files.get("file")
-    if file:
-        filename = secure_filename(f"{txid}_{file.filename}")
-        filepath = os.path.join(app.config['UPLOAD_FOLDER'], filename)
-        file.save(filepath)
-        tx.slip_filename = filename
-        db.session.commit()
-    return "OK",200
+    if "file" not in request.files:
+        return jsonify({"status":"error","message":"No file part"}), 400
+    file = request.files["file"]
+    if file.filename=="":
+        return jsonify({"status":"error","message":"No selected file"}), 400
+    filename = f"{txid}_{secure_filename(file.filename)}"
+    file.save(os.path.join(app.config["UPLOAD_FOLDER"], filename))
 
-@app.route("/uploads/<filename>")
-def serve_slip(filename):
-    return send_from_directory(app.config['UPLOAD_FOLDER'], filename)
+    # เพิ่มชื่อไฟล์ลงรายการ
+    for lst in [transactions["new"], transactions["approved"], transactions["cancelled"]]:
+        for tx in lst:
+            if tx["id"]==txid:
+                tx["slip_filename"] = filename
+                break
+    save_transactions()
+    return jsonify({"status":"success","filename":filename})
 
-# -------------------- Run --------------------
+@app.route("/slip/<filename>")
+def get_slip(filename):
+    return send_from_directory(app.config["UPLOAD_FOLDER"], filename)
+
+# -------------------- Run App --------------------
 if __name__=="__main__":
-    try:
-        db.create_all()
-        print("DB connected successfully!")
-    except Exception as e:
-        print("DB connection failed:", e)
-    app.run(host="0.0.0.0", port=int(os.environ.get("PORT",8080)), debug=False)
+    app.run(host="0.0.0.0", port=int(os.environ.get("PORT",8080)), debug=True)
