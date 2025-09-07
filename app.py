@@ -77,7 +77,6 @@ def get_transactions():
     wallet_daily_total = sum(tx["amount"] for tx in approved_orders)
     wallet_daily_total_str = fmt_amount(wallet_daily_total)
 
-    # เพิ่มฟอร์แมตเวลาอนุมัติ / ยกเลิก
     for tx in approved_orders:
         tx["approved_time_str"] = tx.get("approved_time") or "-"
     for tx in cancelled_orders:
@@ -155,99 +154,7 @@ def restore():
     save_transactions()
     return jsonify({"status": "success"}), 200
 
-# -------------------- Reset --------------------
-@app.route("/reset_approved", methods=["POST"])
-def reset_approved():
-    for tx in transactions["approved"]:
-        tx["status"] = "new"
-        tx.pop("approver_name", None)
-        tx.pop("approved_time", None)
-        tx.pop("customer_user", None)
-        transactions["new"].append(tx)
-    transactions["approved"].clear()
-    save_transactions()
-    return jsonify({"status": "success"}), 200
-
-@app.route("/reset_cancelled", methods=["POST"])
-def reset_cancelled():
-    for tx in transactions["cancelled"]:
-        tx["status"] = "new"
-        tx.pop("canceler_name", None)
-        tx.pop("cancelled_time", None)
-        transactions["new"].append(tx)
-    transactions["cancelled"].clear()
-    save_transactions()
-    return jsonify({"status": "success"}), 200
-
-# -------------------- Webhook TrueWallet --------------------
-@app.route("/truewallet/webhook", methods=["POST"])
-def truewallet_webhook():
-    try:
-        data = request.get_json(force=True, silent=True)
-        if not data:
-            log_with_time("[WEBHOOK ERROR] No JSON received")
-            return jsonify({"status":"error","message":"No JSON received"}), 400
-
-        message_jwt = data.get("message")
-        decoded = {}
-        if message_jwt:
-            try:
-                decoded = jwt.decode(message_jwt, SECRET_KEY, algorithms=["HS256"])
-            except Exception as e:
-                log_with_time("[JWT ERROR]", str(e))
-                return jsonify({"status":"error","message":"Invalid JWT"}), 400
-        else:
-            decoded = data
-
-        txid = decoded.get("transaction_id") or f"TX{len(transactions['new'])+len(transactions['approved'])+len(transactions['cancelled'])+1}"
-        if any(tx["id"] == txid for lst in transactions.values() for tx in lst):
-            return jsonify({"status":"success","message":"Transaction exists"}), 200
-
-        amount = int(decoded.get("amount",0))
-        sender_name = decoded.get("sender_name","-")
-        sender_mobile = decoded.get("sender_mobile","-")
-        name = f"{sender_name} / {sender_mobile}" if sender_mobile else sender_name
-        event_type = decoded.get("event_type","ฝาก").upper()
-        bank_code = (decoded.get("channel") or "").upper()
-
-        if event_type=="P2P" or bank_code in ["TRUEWALLET","WALLET"]:
-            bank_name_th="ทรูวอเลท"
-        elif bank_code in BANK_MAP_TH:
-            bank_name_th=BANK_MAP_TH[bank_code]
-        elif bank_code:
-            bank_name_th=bank_code
-        else:
-            bank_name_th="-"
-
-        time_str = decoded.get("received_time") or datetime.utcnow().isoformat()
-        try:
-            tx_time = time_str[:19].replace("T"," ")
-        except:
-            tx_time = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
-
-        tx = {
-            "id": txid,
-            "event": event_type,
-            "amount": amount,
-            "amount_str": f"{amount/100:,.2f}",
-            "name": name,
-            "bank": bank_name_th,
-            "status": "new",
-            "time": tx_time,
-            "time_str": tx_time,
-            "slip_filename": None
-        }
-
-        transactions["new"].append(tx)
-        save_transactions()
-        log_with_time("[WEBHOOK RECEIVED]", tx)
-        return jsonify({"status":"success"}), 200
-
-    except Exception as e:
-        log_with_time("[WEBHOOK EXCEPTION]", str(e))
-        return jsonify({"status":"error","message":str(e)}), 500
-
-# -------------------- Upload Slip --------------------
+# -------------------- Upload / View Slip --------------------
 @app.route("/upload_slip/<txid>", methods=["POST"])
 def upload_slip(txid):
     if "file" not in request.files:
