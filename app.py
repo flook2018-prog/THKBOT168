@@ -1,9 +1,9 @@
 from flask import Flask, request, jsonify, render_template, send_from_directory
-import os, jwt, random
+import os, json, jwt, random
 from datetime import datetime, timedelta
+from collections import defaultdict
+from werkzeug.utils import secure_filename
 import pytz
-import psycopg2
-from psycopg2.extras import RealDictCursor
 
 # -------------------- Config --------------------
 UPLOAD_FOLDER = "uploads"
@@ -11,10 +11,17 @@ os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 
 app = Flask(__name__)
 app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
-SECRET_KEY = "f557ff6589e6d075581d68df1d4f3af7"
-TZ = pytz.timezone("Asia/Bangkok")
 
-DB_URL = "postgresql://postgres:TzfCyZkvUbFomVpqfRMMeQppGvBjxths@postgres.railway.internal:5432/railway"
+transactions = {"new": [], "approved": [], "cancelled": []}
+daily_summary_history = defaultdict(float)
+ip_approver_map = {}
+customer_daily_top = defaultdict(lambda: defaultdict(int))  # {'2025-09-07': {'thk1001': 500, ...}}
+
+DATA_FILE = "transactions_data.json"
+LOG_FILE = "transactions.log"
+SECRET_KEY = "f557ff6589e6d075581d68df1d4f3af7"
+
+TZ = pytz.timezone("Asia/Bangkok")
 
 BANK_MAP_TH = {
     "BBL": "กรุงเทพ",
@@ -28,57 +35,35 @@ BANK_MAP_TH = {
 }
 
 # -------------------- Helpers --------------------
-def get_db():
-    conn = psycopg2.connect(DB_URL)
-    return conn
+def save_transactions():
+    with open(DATA_FILE, "w", encoding="utf-8") as f:
+        json.dump(transactions, f, ensure_ascii=False, indent=2)
 
 def log_with_time(*args):
     ts = datetime.now(TZ).strftime('%Y-%m-%d %H:%M:%S')
     msg = f"[{ts}] " + " ".join(str(a) for a in args)
     print(msg, flush=True)
-
-def fmt_time_local(t):
-    if not t:
-        return "-"
-    if isinstance(t, str):
-        dt = datetime.fromisoformat(t)
-    else:
-        dt = t
-    return dt.astimezone(TZ).strftime("%Y-%m-%d %H:%M:%S")
-
-def fmt_amount(a):
-    return f"{a/100:,.2f}" if a is not None else "0.00"
+    with open(LOG_FILE, "a", encoding="utf-8") as f:
+        f.write(msg + "\n")
 
 def random_english_name():
     names = ["Alice","Bob","Charlie","David","Eve","Frank","Grace","Hannah","Ian","Jack","Kathy","Leo","Mia","Nina","Oscar"]
     return random.choice(names)
 
-# -------------------- Database Init --------------------
-def init_db():
-    conn = get_db()
-    cur = conn.cursor()
-    cur.execute("""
-    CREATE TABLE IF NOT EXISTS transactions(
-        id TEXT PRIMARY KEY,
-        event TEXT,
-        amount BIGINT,
-        name TEXT,
-        bank TEXT,
-        status TEXT,
-        time TIMESTAMP,
-        approved_time TIMESTAMP,
-        cancel_time TIMESTAMP,
-        approver_name TEXT,
-        canceler_name TEXT,
-        customer_user TEXT,
-        slip_filename TEXT
-    );
-    """)
-    conn.commit()
-    cur.close()
-    conn.close()
+def fmt_time_local(t):
+    if isinstance(t, str):
+        try:
+            dt = datetime.fromisoformat(t)
+        except:
+            return t
+    elif isinstance(t, datetime):
+        dt = t
+    else:
+        return str(t)
+    return dt.astimezone(TZ).strftime("%Y-%m-%d %H:%M:%S")
 
-init_db()
+def fmt_amount(a):
+    return f"{a/100:,.2f}" if isinstance(a,(int,float)) else str(a)
 
 # -------------------- Flask Endpoints --------------------
 @app.route("/")
@@ -86,120 +71,140 @@ def index():
     user_ip = request.remote_addr or "unknown"
     return render_template("index.html", user_ip=user_ip)
 
-# -------------------- Get Transactions --------------------
 @app.route("/get_transactions")
 def get_transactions():
-    conn = get_db()
-    cur = conn.cursor(cursor_factory=RealDictCursor)
-    cur.execute("SELECT * FROM transactions ORDER BY time DESC")
-    all_tx = cur.fetchall()
-    cur.close()
-    conn.close()
+    new_orders = transactions["new"][-20:][::-1]
+    approved_orders = transactions["approved"][-20:][::-1]
+    cancelled_orders = transactions["cancelled"][-20:][::-1]
 
-    new_orders = [tx for tx in all_tx if tx["status"]=="new"][:20]
-    approved_orders = [tx for tx in all_tx if tx["status"]=="approved"][:20]
-    cancelled_orders = [tx for tx in all_tx if tx["status"]=="cancelled"][:20]
+    wallet_daily_total = sum(tx["amount"] for tx in approved_orders)
+    wallet_daily_total_str = fmt_amount(wallet_daily_total)
 
-    daily_summary = {}
+    # ฟอร์แมตเวลาเป็น Asia/Bangkok
+    for tx in new_orders:
+        tx["time_str"] = fmt_time_local(tx.get("time"))
     for tx in approved_orders:
-        day = tx["time"].strftime("%Y-%m-%d")
-        daily_summary[day] = daily_summary.get(day,0)+tx["amount"]
+        tx["time_str"] = fmt_time_local(tx.get("time"))
+        tx["approved_time_str"] = fmt_time_local(tx.get("approved_time"))
+    for tx in cancelled_orders:
+        tx["time_str"] = fmt_time_local(tx.get("time"))
+        tx["cancelled_time_str"] = fmt_time_local(tx.get("cancelled_time"))
+
+    # Top 5 user per day
+    top_users_per_day = {}
+    for day, users in customer_daily_top.items():
+        sorted_users = sorted(users.items(), key=lambda x: x[1], reverse=True)[:5]
+        top_users_per_day[day] = [{"user": u, "amount": fmt_amount(v)} for u,v in sorted_users]
 
     return jsonify({
-        "new_orders": [{**tx, "time_str":fmt_time_local(tx["time"])} for tx in new_orders],
-        "approved_orders": [{**tx, "time_str":fmt_time_local(tx["time"]), "approved_time_str":fmt_time_local(tx["approved_time"])} for tx in approved_orders],
-        "cancelled_orders": [{**tx, "time_str":fmt_time_local(tx["time"]), "cancelled_time_str":fmt_time_local(tx["cancel_time"])} for tx in cancelled_orders],
-        "wallet_daily_total": fmt_amount(sum(tx["amount"] for tx in approved_orders)),
-        "daily_summary": [{"date":k,"total":fmt_amount(v)} for k,v in daily_summary.items()]
+        "new_orders": new_orders,
+        "approved_orders": approved_orders,
+        "cancelled_orders": cancelled_orders,
+        "wallet_daily_total": wallet_daily_total_str,
+        "daily_summary": [{"date": d, "total": fmt_amount(v)} for d,v in sorted(daily_summary_history.items())],
+        "top_users": top_users_per_day
     })
 
-# -------------------- Approve --------------------
+# -------------------- Approve / Cancel / Restore --------------------
 @app.route("/approve", methods=["POST"])
 def approve():
-    data = request.json
-    txid = data.get("id")
-    customer_user = data.get("customer_user")
-    approver_name = random_english_name()
+    txid = request.json.get("id")
+    customer_user = request.json.get("customer_user")
+    user_ip = request.remote_addr or "unknown"
+    if user_ip not in ip_approver_map:
+        ip_approver_map[user_ip] = random_english_name()
+    approver_name = ip_approver_map[user_ip]
 
-    conn = get_db()
-    cur = conn.cursor()
-    cur.execute("UPDATE transactions SET status='approved', approved_time=%s, approver_name=%s, customer_user=%s WHERE id=%s",
-                (datetime.utcnow(), approver_name, customer_user, txid))
-    conn.commit()
-    cur.close()
-    conn.close()
-    log_with_time(f"[APPROVED] {txid} by {approver_name} for {customer_user}")
-    return jsonify({"status":"success"})
+    for tx in transactions["new"]:
+        if tx["id"] == txid:
+            tx["status"] = "approved"
+            tx["approver_name"] = approver_name
+            tx["approved_time"] = datetime.utcnow().isoformat()
+            tx["customer_user"] = customer_user
+            transactions["approved"].append(tx)
+            transactions["new"].remove(tx)
 
-# -------------------- Cancel --------------------
+            day = tx["time"][:10] if isinstance(tx["time"], str) else tx["time"].strftime("%Y-%m-%d")
+            daily_summary_history[day] += tx["amount"]
+
+            # จดจำยูสลูกค้าเฉพาะ thkXXXXXX
+            if customer_user and customer_user.lower().startswith("thk") and customer_user[3:].isdigit():
+                customer_daily_top[day][customer_user] += tx["amount"]
+
+            log_with_time(f"[APPROVED] {txid} by {approver_name} ({user_ip}) for customer {customer_user}")
+            break
+    save_transactions()
+    return jsonify({"status": "success"}), 200
+
 @app.route("/cancel", methods=["POST"])
 def cancel():
-    data = request.json
-    txid = data.get("id")
-    canceler_name = random_english_name()
-    conn = get_db()
-    cur = conn.cursor()
-    cur.execute("UPDATE transactions SET status='cancelled', cancel_time=%s, canceler_name=%s WHERE id=%s",
-                (datetime.utcnow(), canceler_name, txid))
-    conn.commit()
-    cur.close()
-    conn.close()
-    log_with_time(f"[CANCELLED] {txid} by {canceler_name}")
-    return jsonify({"status":"success"})
+    txid = request.json.get("id")
+    user_ip = request.remote_addr or "unknown"
+    if user_ip not in ip_approver_map:
+        ip_approver_map[user_ip] = random_english_name()
+    canceler_name = ip_approver_map[user_ip]
 
-# -------------------- Restore --------------------
+    for tx in transactions["new"]:
+        if tx["id"] == txid:
+            tx["status"] = "cancelled"
+            tx["cancelled_time"] = datetime.utcnow().isoformat()
+            tx["canceler_name"] = canceler_name
+            transactions["cancelled"].append(tx)
+            transactions["new"].remove(tx)
+            log_with_time(f"[CANCELLED] {txid} by {canceler_name} ({user_ip})")
+            break
+    save_transactions()
+    return jsonify({"status": "success"}), 200
+
 @app.route("/restore", methods=["POST"])
 def restore():
     txid = request.json.get("id")
-    conn = get_db()
-    cur = conn.cursor()
-    cur.execute("UPDATE transactions SET status='new', approver_name=NULL, approved_time=NULL, canceler_name=NULL, cancel_time=NULL, customer_user=NULL WHERE id=%s", (txid,))
-    conn.commit()
-    cur.close()
-    conn.close()
-    log_with_time(f"[RESTORED] {txid}")
-    return jsonify({"status":"success"})
+    for lst in [transactions["approved"], transactions["cancelled"]]:
+        for tx in lst:
+            if tx["id"] == txid:
+                tx["status"] = "new"
+                tx.pop("approver_name", None)
+                tx.pop("approved_time", None)
+                tx.pop("canceler_name", None)
+                tx.pop("cancelled_time", None)
+                tx.pop("customer_user", None)
+                transactions["new"].append(tx)
+                lst.remove(tx)
+                log_with_time(f"[RESTORED] {txid}")
+                break
+    save_transactions()
+    return jsonify({"status": "success"}), 200
 
-# -------------------- Upload Slip --------------------
-@app.route("/upload_slip/<txid>", methods=["POST"])
-def upload_slip(txid):
-    if "file" not in request.files:
-        return jsonify({"status":"error","message":"No file part"}), 400
-    file = request.files["file"]
-    if not file.filename:
-        return jsonify({"status":"error","message":"No selected file"}), 400
-    filename = f"{txid}_{file.filename}"
-    file.save(os.path.join(app.config["UPLOAD_FOLDER"], filename))
-
-    conn = get_db()
-    cur = conn.cursor()
-    cur.execute("UPDATE transactions SET slip_filename=%s WHERE id=%s", (filename, txid))
-    conn.commit()
-    cur.close()
-    conn.close()
-    return jsonify({"status":"success","filename":filename})
-
-@app.route("/slip/<filename>")
-def get_slip(filename):
-    return send_from_directory(app.config["UPLOAD_FOLDER"], filename)
-
-# -------------------- TrueWallet Webhook --------------------
+# -------------------- Webhook TrueWallet --------------------
 @app.route("/truewallet/webhook", methods=["POST"])
 def truewallet_webhook():
     try:
-        data = request.get_json(force=True)
+        data = request.get_json(force=True, silent=True)
+        if not data:
+            log_with_time("[WEBHOOK ERROR] No JSON received")
+            return jsonify({"status":"error","message":"No JSON received"}), 400
+
         message_jwt = data.get("message")
         decoded = {}
         if message_jwt:
-            decoded = jwt.decode(message_jwt, SECRET_KEY, algorithms=["HS256"])
+            try:
+                decoded = jwt.decode(message_jwt, SECRET_KEY, algorithms=["HS256"])
+            except Exception as e:
+                log_with_time("[JWT ERROR]", str(e))
+                return jsonify({"status":"error","message":"Invalid JWT"}), 400
         else:
             decoded = data
 
-        txid = decoded.get("transaction_id") or f"TX{random.randint(1000,9999)}"
+        txid = decoded.get("transaction_id") or f"TX{len(transactions['new'])+len(transactions['approved'])+len(transactions['cancelled'])+1}"
+        if any(tx["id"] == txid for lst in transactions.values() for tx in lst):
+            return jsonify({"status":"success","message":"Transaction exists"}), 200
+
         amount = int(decoded.get("amount",0))
         sender_name = decoded.get("sender_name","-")
         sender_mobile = decoded.get("sender_mobile","-")
-        name = f"{sender_name} / {sender_mobile}" if sender_mobile and sender_mobile!="-” else sender_name
+        # แก้ไขเครื่องหมายตรงนี้
+        name = f"{sender_name} / {sender_mobile}" if sender_mobile and sender_mobile != "-" else sender_name
+
         event_type = decoded.get("event_type","ฝาก").upper()
         bank_code = (decoded.get("channel") or "").upper()
 
@@ -212,27 +217,56 @@ def truewallet_webhook():
         else:
             bank_name_th="-"
 
+        # แปลงเวลาที่ได้รับเป็น UTC ก่อนเก็บ
         time_str = decoded.get("received_time") or datetime.utcnow().isoformat()
         try:
-            tx_time = datetime.fromisoformat(time_str)
+            tx_time_utc = datetime.fromisoformat(time_str)
         except:
-            tx_time = datetime.utcnow()
+            tx_time_utc = datetime.utcnow()
 
-        conn = get_db()
-        cur = conn.cursor()
-        cur.execute("""
-            INSERT INTO transactions(id,event,amount,name,bank,status,time)
-            VALUES(%s,%s,%s,%s,%s,'new',%s) ON CONFLICT(id) DO NOTHING
-        """, (txid,event_type,amount,name,bank_name_th,tx_time))
-        conn.commit()
-        cur.close()
-        conn.close()
+        tx = {
+            "id": txid,
+            "event": event_type,
+            "amount": amount,
+            "amount_str": f"{amount/100:,.2f}",
+            "name": name,
+            "bank": bank_name_th,
+            "status": "new",
+            "time": tx_time_utc.isoformat(),
+            "slip_filename": None
+        }
 
-        log_with_time("[WEBHOOK RECEIVED]", txid, amount, name)
-        return jsonify({"status":"success"})
+        transactions["new"].append(tx)
+        save_transactions()
+        log_with_time("[WEBHOOK RECEIVED]", tx)
+        return jsonify({"status":"success"}), 200
+
     except Exception as e:
         log_with_time("[WEBHOOK EXCEPTION]", str(e))
-        return jsonify({"status":"error","message":str(e)}),500
+        return jsonify({"status":"error","message":str(e)}), 500
+
+# -------------------- Upload Slip --------------------
+@app.route("/upload_slip/<txid>", methods=["POST"])
+def upload_slip(txid):
+    if "file" not in request.files:
+        return jsonify({"status":"error","message":"No file part"}), 400
+    file = request.files["file"]
+    if file.filename=="":
+        return jsonify({"status":"error","message":"No selected file"}), 400
+    filename = f"{txid}_{secure_filename(file.filename)}"
+    file.save(os.path.join(app.config["UPLOAD_FOLDER"], filename))
+
+    for lst in [transactions["new"], transactions["approved"], transactions["cancelled"]]:
+        for tx in lst:
+            if tx["id"]==txid:
+                tx["slip_filename"] = filename
+                break
+    save_transactions()
+    return jsonify({"status": "success","filename":filename})
+
+@app.route("/slip/<filename>")
+def get_slip(filename):
+    return send_from_directory(app.config["UPLOAD_FOLDER"], filename)
 
 # -------------------- Run App --------------------
 if __name__=="__main__":
