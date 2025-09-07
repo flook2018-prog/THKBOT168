@@ -1,6 +1,6 @@
 from flask import Flask, request, jsonify, render_template, send_from_directory
 import os, json, jwt, random
-from datetime import datetime, timedelta
+from datetime import datetime, timezone
 from collections import defaultdict
 from werkzeug.utils import secure_filename
 
@@ -32,7 +32,7 @@ BANK_MAP_TH = {
 # -------------------- Helpers --------------------
 def save_transactions():
     with open(DATA_FILE, "w", encoding="utf-8") as f:
-        json.dump(transactions, f, ensure_ascii=False, indent=2)
+        json.dump(transactions, f, ensure_ascii=False, indent=2, default=str)
 
 def log_with_time(*args):
     ts = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
@@ -46,38 +46,19 @@ def random_english_name():
     return random.choice(names)
 
 def fmt_time(t):
-    if isinstance(t, str):
-        try:
-            return t[:19].replace("T"," ")
-        except:
-            return str(t)
-    elif isinstance(t, datetime):
+    if isinstance(t, datetime):
         return t.strftime("%Y-%m-%d %H:%M:%S")
+    elif isinstance(t, str):
+        return t[:19].replace("T"," ")
     return str(t)
 
 def fmt_amount(a):
     return f"{a/100:,.2f}" if isinstance(a,(int,float)) else str(a)
 
-# -------------------- Auto-reset >2 months --------------------
-def auto_reset_old_data():
-    threshold = datetime.utcnow() - timedelta(days=60)
-    for lst_name in ["new","approved","cancelled"]:
-        lst = transactions[lst_name]
-        for tx in lst[:]:
-            try:
-                tx_time = datetime.strptime(tx["time_str"], "%Y-%m-%d %H:%M:%S")
-                if tx_time < threshold:
-                    lst.remove(tx)
-                    log_with_time(f"[AUTO RESET] Removed {tx['id']} from {lst_name}")
-            except:
-                continue
-    save_transactions()
-
 # -------------------- Flask Endpoints --------------------
 @app.route("/")
 def index():
     user_ip = request.remote_addr or "unknown"
-    auto_reset_old_data()
     return render_template("index.html", user_ip=user_ip)
 
 @app.route("/get_transactions")
@@ -89,11 +70,10 @@ def get_transactions():
     wallet_daily_total = sum(tx["amount"] for tx in approved_orders)
     wallet_daily_total_str = fmt_amount(wallet_daily_total)
 
-    # เพิ่มฟอร์แมตเวลาอนุมัติ / ยกเลิก
     for tx in approved_orders:
-        tx["approved_time_str"] = tx.get("approved_time") or "-"
+        tx["approved_time_str"] = fmt_time(tx.get("approved_time")) or "-"
     for tx in cancelled_orders:
-        tx["cancelled_time_str"] = tx.get("cancelled_time") or "-"
+        tx["cancelled_time_str"] = fmt_time(tx.get("cancelled_time")) or "-"
 
     return jsonify({
         "new_orders": new_orders,
@@ -103,6 +83,7 @@ def get_transactions():
         "daily_summary": [{"date": d, "total": fmt_amount(v)} for d,v in sorted(daily_summary_history.items())]
     })
 
+# -------------------- Approve / Cancel / Restore / Reset --------------------
 @app.route("/approve", methods=["POST"])
 def approve():
     txid = request.json.get("id")
@@ -116,8 +97,8 @@ def approve():
         if tx["id"] == txid:
             tx["status"] = "approved"
             tx["approver_name"] = approver_name
-            tx["approved_time"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")  # เวลาไทย
-            tx["approved_time_str"] = tx["approved_time"]
+            tx["approved_time"] = datetime.now(timezone.utc)
+            tx["approved_time_str"] = fmt_time(tx["approved_time"])
             tx["customer_user"] = customer_user
             transactions["approved"].append(tx)
             transactions["new"].remove(tx)
@@ -139,8 +120,8 @@ def cancel():
     for tx in transactions["new"]:
         if tx["id"] == txid:
             tx["status"] = "cancelled"
-            tx["cancelled_time"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            tx["cancelled_time_str"] = tx["cancelled_time"]
+            tx["cancelled_time"] = datetime.now(timezone.utc)
+            tx["cancelled_time_str"] = fmt_time(tx["cancelled_time"])
             tx["canceler_name"] = canceler_name
             transactions["cancelled"].append(tx)
             transactions["new"].remove(tx)
@@ -226,7 +207,6 @@ def truewallet_webhook():
         event_type = decoded.get("event_type","ฝาก").upper()
         bank_code = (decoded.get("channel") or "").upper()
 
-        # ธนาคารไทย
         if event_type=="P2P" or bank_code in ["TRUEWALLET","WALLET"]:
             bank_name_th="ทรูวอเลท"
         elif bank_code in BANK_MAP_TH:
@@ -236,11 +216,11 @@ def truewallet_webhook():
         else:
             bank_name_th="-"
 
-        time_str = decoded.get("received_time") or datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        time_str = decoded.get("received_time") or datetime.now(timezone.utc).isoformat()
         try:
             tx_time = time_str[:19].replace("T"," ")
         except:
-            tx_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            tx_time = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
 
         tx = {
             "id": txid,
@@ -273,9 +253,9 @@ def upload_slip(txid):
     if file.filename=="":
         return jsonify({"status":"error","message":"No selected file"}), 400
     filename = f"{txid}_{secure_filename(file.filename)}"
-    file.save(os.path.join(app.config["UPLOAD_FOLDER"], filename))
+    path = os.path.join(app.root_path, app.config["UPLOAD_FOLDER"])
+    file.save(os.path.join(path, filename))
 
-    # เพิ่มชื่อไฟล์ลงรายการ
     for lst in [transactions["new"], transactions["approved"], transactions["cancelled"]]:
         for tx in lst:
             if tx["id"]==txid:
@@ -286,7 +266,10 @@ def upload_slip(txid):
 
 @app.route("/slip/<filename>")
 def get_slip(filename):
-    return send_from_directory(app.config["UPLOAD_FOLDER"], filename)
+    path = os.path.join(app.root_path, app.config["UPLOAD_FOLDER"])
+    if not os.path.isfile(os.path.join(path, filename)):
+        return "File not found", 404
+    return send_from_directory(path, filename)
 
 # -------------------- Run App --------------------
 if __name__=="__main__":
