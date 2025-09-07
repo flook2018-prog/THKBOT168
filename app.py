@@ -1,6 +1,6 @@
 from flask import Flask, request, jsonify, render_template, send_from_directory
 import os, json, jwt, random
-from datetime import datetime
+from datetime import datetime, timedelta
 from collections import defaultdict
 from werkzeug.utils import secure_filename
 import pytz
@@ -20,20 +20,9 @@ DATA_FILE = "transactions_data.json"
 LOG_FILE = "transactions.log"
 SECRET_KEY = "f557ff6589e6d075581d68df1d4f3af7"
 
-# -------------------- Timezone --------------------
+# กำหนด timezone
 TZ = pytz.timezone("Asia/Bangkok")
 
-def fmt_time_local(dt):
-    if isinstance(dt, str):
-        try:
-            dt = datetime.fromisoformat(dt)
-        except:
-            dt = datetime.utcnow()
-    if isinstance(dt, datetime):
-        return dt.astimezone(TZ).strftime("%Y-%m-%d %H:%M:%S")
-    return str(dt)
-
-# -------------------- Bank Mapping --------------------
 BANK_MAP_TH = {
     "BBL": "กรุงเทพ",
     "KBANK": "กสิกรไทย",
@@ -61,6 +50,18 @@ def random_english_name():
     names = ["Alice","Bob","Charlie","David","Eve","Frank","Grace","Hannah","Ian","Jack","Kathy","Leo","Mia","Nina","Oscar"]
     return random.choice(names)
 
+def fmt_time_local(t):
+    if isinstance(t, str):
+        try:
+            dt = datetime.fromisoformat(t)
+        except:
+            return t
+    elif isinstance(t, datetime):
+        dt = t
+    else:
+        return str(t)
+    return dt.astimezone(TZ).strftime("%Y-%m-%d %H:%M:%S")
+
 def fmt_amount(a):
     return f"{a/100:,.2f}" if isinstance(a,(int,float)) else str(a)
 
@@ -79,15 +80,15 @@ def get_transactions():
     wallet_daily_total = sum(tx["amount"] for tx in approved_orders)
     wallet_daily_total_str = fmt_amount(wallet_daily_total)
 
-    # เพิ่มฟอร์แมตเวลาอนุมัติ / ยกเลิก / รายการใหม่
+    # ฟอร์แมตเวลาเป็น Asia/Bangkok
     for tx in new_orders:
         tx["time_str"] = fmt_time_local(tx.get("time"))
     for tx in approved_orders:
+        tx["time_str"] = fmt_time_local(tx.get("time"))
         tx["approved_time_str"] = fmt_time_local(tx.get("approved_time"))
-        tx["time_str"] = fmt_time_local(tx.get("time"))
     for tx in cancelled_orders:
-        tx["cancelled_time_str"] = fmt_time_local(tx.get("cancelled_time"))
         tx["time_str"] = fmt_time_local(tx.get("time"))
+        tx["cancelled_time_str"] = fmt_time_local(tx.get("cancelled_time"))
 
     return jsonify({
         "new_orders": new_orders,
@@ -147,8 +148,8 @@ def restore():
     txid = request.json.get("id")
     for lst in [transactions["approved"], transactions["cancelled"]]:
         for tx in lst:
-            if tx["id"]==txid:
-                tx["status"]="new"
+            if tx["id"] == txid:
+                tx["status"] = "new"
                 tx.pop("approver_name", None)
                 tx.pop("approved_time", None)
                 tx.pop("canceler_name", None)
@@ -159,33 +160,33 @@ def restore():
                 log_with_time(f"[RESTORED] {txid}")
                 break
     save_transactions()
-    return jsonify({"status":"success"}),200
+    return jsonify({"status": "success"}), 200
 
 # -------------------- Reset --------------------
 @app.route("/reset_approved", methods=["POST"])
 def reset_approved():
     for tx in transactions["approved"]:
-        tx["status"]="new"
+        tx["status"] = "new"
         tx.pop("approver_name", None)
         tx.pop("approved_time", None)
         tx.pop("customer_user", None)
         transactions["new"].append(tx)
     transactions["approved"].clear()
     save_transactions()
-    return jsonify({"status":"success"}),200
+    return jsonify({"status": "success"}), 200
 
 @app.route("/reset_cancelled", methods=["POST"])
 def reset_cancelled():
     for tx in transactions["cancelled"]:
-        tx["status"]="new"
+        tx["status"] = "new"
         tx.pop("canceler_name", None)
         tx.pop("cancelled_time", None)
         transactions["new"].append(tx)
     transactions["cancelled"].clear()
     save_transactions()
-    return jsonify({"status":"success"}),200
+    return jsonify({"status": "success"}), 200
 
-# -------------------- TrueWallet Webhook --------------------
+# -------------------- Webhook TrueWallet --------------------
 @app.route("/truewallet/webhook", methods=["POST"])
 def truewallet_webhook():
     try:
@@ -206,7 +207,7 @@ def truewallet_webhook():
             decoded = data
 
         txid = decoded.get("transaction_id") or f"TX{len(transactions['new'])+len(transactions['approved'])+len(transactions['cancelled'])+1}"
-        if any(tx["id"]==txid for lst in transactions.values() for tx in lst):
+        if any(tx["id"] == txid for lst in transactions.values() for tx in lst):
             return jsonify({"status":"success","message":"Transaction exists"}), 200
 
         amount = int(decoded.get("amount",0))
@@ -225,11 +226,12 @@ def truewallet_webhook():
         else:
             bank_name_th="-"
 
+        # แปลงเวลาที่ได้รับเป็น UTC ก่อนเก็บ
         time_str = decoded.get("received_time") or datetime.utcnow().isoformat()
         try:
-            tx_time = time_str[:19].replace("T"," ")
+            tx_time_utc = datetime.fromisoformat(time_str)
         except:
-            tx_time = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
+            tx_time_utc = datetime.utcnow()
 
         tx = {
             "id": txid,
@@ -239,8 +241,7 @@ def truewallet_webhook():
             "name": name,
             "bank": bank_name_th,
             "status": "new",
-            "time": tx_time,
-            "time_str": fmt_time_local(tx_time),
+            "time": tx_time_utc.isoformat(),
             "slip_filename": None
         }
 
@@ -267,10 +268,10 @@ def upload_slip(txid):
     for lst in [transactions["new"], transactions["approved"], transactions["cancelled"]]:
         for tx in lst:
             if tx["id"]==txid:
-                tx["slip_filename"]=filename
+                tx["slip_filename"] = filename
                 break
     save_transactions()
-    return jsonify({"status":"success","filename":filename})
+    return jsonify({"status": "success","filename":filename})
 
 @app.route("/slip/<filename>")
 def get_slip(filename):
