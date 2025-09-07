@@ -4,3 +4,5 @@ Flask-SQLAlchemy==3.0.5
 Flask-SocketIO==5.5.1
 eventlet==0.33.3
 python-dotenv==1.0.1
+Flask
+mysql-connector-python
