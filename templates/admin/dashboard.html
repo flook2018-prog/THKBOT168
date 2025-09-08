@@ -1,0 +1,274 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Admin Dashboard - THKBot168</title>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: #f8f9fa;
+            margin: 0;
+            padding: 0;
+        }
+        .navbar {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 1rem 2rem;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        .navbar h1 {
+            margin: 0;
+            font-size: 1.5rem;
+        }
+        .navbar .user-info {
+            display: flex;
+            align-items: center;
+            gap: 1rem;
+        }
+        .navbar a {
+            color: white;
+            text-decoration: none;
+            padding: 0.5rem 1rem;
+            border-radius: 5px;
+            transition: background-color 0.3s;
+        }
+        .navbar a:hover {
+            background-color: rgba(255,255,255,0.2);
+        }
+        .container {
+            max-width: 1200px;
+            margin: 2rem auto;
+            padding: 0 1rem;
+        }
+        .dashboard-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 1.5rem;
+            margin-bottom: 2rem;
+        }
+        .stat-card {
+            background: white;
+            padding: 1.5rem;
+            border-radius: 10px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+            text-align: center;
+        }
+        .stat-card h3 {
+            margin: 0 0 0.5rem 0;
+            color: #333;
+            font-size: 0.9rem;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+        .stat-card .number {
+            font-size: 2rem;
+            font-weight: bold;
+            color: #667eea;
+            margin: 0;
+        }
+        .navigation-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 1.5rem;
+            margin-bottom: 2rem;
+        }
+        .nav-card {
+            background: white;
+            padding: 1.5rem;
+            border-radius: 10px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+            transition: transform 0.3s;
+        }
+        .nav-card:hover {
+            transform: translateY(-5px);
+        }
+        .nav-card h3 {
+            margin: 0 0 1rem 0;
+            color: #333;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+        .nav-card p {
+            color: #666;
+            margin: 0 0 1rem 0;
+        }
+        .nav-card a {
+            display: inline-block;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 0.5rem 1rem;
+            text-decoration: none;
+            border-radius: 5px;
+            transition: transform 0.2s;
+        }
+        .nav-card a:hover {
+            transform: translateY(-2px);
+        }
+        .recent-messages {
+            background: white;
+            padding: 1.5rem;
+            border-radius: 10px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+        }
+        .recent-messages h3 {
+            margin: 0 0 1rem 0;
+            color: #333;
+        }
+        .message-item {
+            padding: 0.75rem;
+            border-bottom: 1px solid #eee;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .message-item:last-child {
+            border-bottom: none;
+        }
+        .message-content {
+            flex: 1;
+        }
+        .message-user {
+            font-weight: bold;
+            color: #333;
+        }
+        .message-text {
+            color: #666;
+            font-size: 0.9rem;
+            margin: 0.25rem 0;
+        }
+        .message-time {
+            color: #999;
+            font-size: 0.8rem;
+        }
+        .status-badge {
+            padding: 0.25rem 0.5rem;
+            border-radius: 15px;
+            font-size: 0.8rem;
+            font-weight: bold;
+        }
+        .status-unread {
+            background: #ff6b6b;
+            color: white;
+        }
+        .status-read {
+            background: #4ecdc4;
+            color: white;
+        }
+        .status-replied {
+            background: #45b7d1;
+            color: white;
+        }
+        .alert {
+            padding: 0.75rem;
+            margin-bottom: 1rem;
+            border-radius: 8px;
+        }
+        .alert-success {
+            background-color: #d4edda;
+            color: #155724;
+            border: 1px solid #c3e6cb;
+        }
+        .alert-error {
+            background-color: #f8d7da;
+            color: #721c24;
+            border: 1px solid #f5c6cb;
+        }
+    </style>
+</head>
+<body>
+    <nav class="navbar">
+        <h1>🤖 THKBot168 Admin</h1>
+        <div class="user-info">
+            <span>สวัสดี, {{ current_user.username }}!</span>
+            <a href="{{ url_for('admin.logout') }}">ออกจากระบบ</a>
+        </div>
+    </nav>
+    
+    <div class="container">
+        {% with messages = get_flashed_messages() %}
+            {% if messages %}
+                {% for message in messages %}
+                    <div class="alert alert-success">{{ message }}</div>
+                {% endfor %}
+            {% endif %}
+        {% endwith %}
+        
+        <div class="dashboard-grid">
+            <div class="stat-card">
+                <h3>LINE OA ที่เปิดใช้งาน</h3>
+                <p class="number">{{ stats.total_line_oas }}</p>
+            </div>
+            <div class="stat-card">
+                <h3>ข้อความที่ยังไม่อ่าน</h3>
+                <p class="number">{{ stats.unread_messages }}</p>
+            </div>
+            <div class="stat-card">
+                <h3>สลิปที่รอตรวจสอบ</h3>
+                <p class="number">{{ stats.pending_slips }}</p>
+            </div>
+            <div class="stat-card">
+                <h3>แพทเทินที่เปิดใช้งาน</h3>
+                <p class="number">{{ stats.active_patterns }}</p>
+            </div>
+        </div>
+        
+        <div class="navigation-grid">
+            <div class="nav-card">
+                <h3>📱 จัดการ LINE OA</h3>
+                <p>เพิ่ม แก้ไข และจัดการบัญชี LINE Official Account</p>
+                <a href="{{ url_for('admin.line_oas') }}">เข้าจัดการ</a>
+            </div>
+            
+            <div class="nav-card">
+                <h3>💬 ข้อความลูกค้า</h3>
+                <p>ตอบข้อความลูกค้า ดูประวัติการสนทนา</p>
+                <a href="{{ url_for('admin.messages') }}">เข้าจัดการ</a>
+            </div>
+            
+            <div class="nav-card">
+                <h3>🤖 แพทเทินตอบกลับ</h3>
+                <p>ตั้งค่าการตอบกลับอัตโนมัติและข้อความด่วน</p>
+                <a href="{{ url_for('admin.patterns') }}">เข้าจัดการ</a>
+            </div>
+            
+            <div class="nav-card">
+                <h3>🧾 ตรวจสอบสลิป</h3>
+                <p>ระบบตรวจจับสลิปปลอมและผลการวิเคราะห์</p>
+                <a href="{{ url_for('admin.slips') }}">เข้าจัดการ</a>
+            </div>
+            
+            <div class="nav-card">
+                <h3>💰 ระบบธุรกรรม</h3>
+                <p>จัดการธุรกรรมและการอนุมัติ</p>
+                <a href="{{ url_for('index') }}">เข้าจัดการ</a>
+            </div>
+        </div>
+        
+        {% if recent_messages %}
+        <div class="recent-messages">
+            <h3>📨 ข้อความล่าสุด</h3>
+            {% for message in recent_messages %}
+            <div class="message-item">
+                <div class="message-content">
+                    <div class="message-user">{{ message.user_display_name or message.user_id }}</div>
+                    <div class="message-text">{{ message.message_text[:100] }}{% if message.message_text|length > 100 %}...{% endif %}</div>
+                    <div class="message-time">{{ message.timestamp.strftime('%d/%m/%Y %H:%M') }}</div>
+                </div>
+                <div class="status-badge status-{{ message.status }}">
+                    {% if message.status == 'unread' %}ยังไม่อ่าน
+                    {% elif message.status == 'read' %}อ่านแล้ว
+                    {% elif message.status == 'replied' %}ตอบแล้ว
+                    {% endif %}
+                </div>
+            </div>
+            {% endfor %}
+        </div>
+        {% endif %}
+    </div>
+</body>
+</html>

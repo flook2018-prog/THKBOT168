@@ -1,70 +1,27 @@
-from flask import Flask, request, jsonify, render_template, send_from_directory, redirect, url_for
-from flask_login import LoginManager
-from flask_socketio import SocketIO
+from flask import Flask, request, jsonify, render_template, send_from_directory
 import os, json, jwt, random
 from datetime import datetime, timedelta
 from collections import defaultdict
 from werkzeug.utils import secure_filename
 import pytz
-import logging
-
-# Import our new modules with fallback handling
-try:
-    from config import Config
-    from models import db, User, LineOA, LineMessage, Transaction
-    from admin_routes import admin_bp
-    from line_utils import line_manager
-    from slip_utils import slip_verifier
-    MODULES_AVAILABLE = True
-except ImportError as e:
-    print(f"Warning: Some modules not available: {e}")
-    MODULES_AVAILABLE = False
-    # Create minimal fallback configuration
-    class Config:
-        SECRET_KEY = 'f557ff6589e6d075581d68df1d4f3af7'
-        UPLOAD_FOLDER = 'uploads'
-        TIMEZONE = 'Asia/Bangkok'
-        TRUEWALLET_SECRET_KEY = 'f557ff6589e6d075581d68df1d4f3af7'
-        SLIP_VERIFICATION_ENABLED = False
 
 # -------------------- Config --------------------
+UPLOAD_FOLDER = "uploads"
+os.makedirs(UPLOAD_FOLDER, exist_ok=True)
+
 app = Flask(__name__)
-app.config.from_object(Config)
+app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
 
-# Initialize extensions only if modules are available
-if MODULES_AVAILABLE:
-    db.init_app(app)
-    socketio = SocketIO(app, cors_allowed_origins="*")
-
-    # Setup Flask-Login
-    login_manager = LoginManager()
-    login_manager.init_app(app)
-    login_manager.login_view = 'admin.login'
-    login_manager.login_message = 'กรุณาเข้าสู่ระบบเพื่อใช้งาน'
-
-    @login_manager.user_loader
-    def load_user(user_id):
-        return User.query.get(int(user_id))
-
-    # Register blueprints
-    app.register_blueprint(admin_bp)
-else:
-    socketio = None
-
-# Setup logging
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
-
-# Legacy data structures for backward compatibility
 transactions = {"new": [], "approved": [], "cancelled": []}
 daily_summary_history = defaultdict(float)
 ip_approver_map = {}
 
-# Constants
 DATA_FILE = "transactions_data.json"
 LOG_FILE = "transactions.log"
-SECRET_KEY = app.config['TRUEWALLET_SECRET_KEY']
-TZ = pytz.timezone(app.config['TIMEZONE'])
+SECRET_KEY = "f557ff6589e6d075581d68df1d4f3af7"
+
+# กำหนด timezone
+TZ = pytz.timezone("Asia/Bangkok")
 
 BANK_MAP_TH = {
     "BBL": "กรุงเทพ",
@@ -113,21 +70,74 @@ def fmt_amount(a):
 def index():
     user_ip = request.remote_addr or "unknown"
     
-    # Get statistics for enhanced dashboard
+    # Enhanced stats for demo
     stats = {
-        'active_line_oas': 0,
-        'unread_messages': 0,
+        'active_line_oas': 2,  # Demo data
+        'unread_messages': 5,  # Demo data
         'total_transactions': len(transactions['new']) + len(transactions['approved']) + len(transactions['cancelled'])
     }
     
-    if MODULES_AVAILABLE:
-        try:
-            stats['active_line_oas'] = LineOA.query.filter_by(is_active=True).count()
-            stats['unread_messages'] = LineMessage.query.filter_by(status='unread').count()
-        except:
-            pass
-    
     return render_template("index.html", user_ip=user_ip, stats=stats)
+
+@app.route("/admin")
+def admin_demo():
+    """Demo admin page"""
+    return """
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <title>THKBot168 Admin - Coming Soon</title>
+        <style>
+            body { font-family: Arial, sans-serif; text-align: center; padding: 50px; background: #f0f2f5; }
+            .container { max-width: 600px; margin: 0 auto; background: white; padding: 40px; border-radius: 10px; box-shadow: 0 4px 12px rgba(0,0,0,0.1); }
+            h1 { color: #333; margin-bottom: 20px; }
+            .feature { margin: 20px 0; padding: 15px; background: #f8f9fa; border-radius: 8px; }
+            .btn { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px; display: inline-block; margin: 10px; }
+        </style>
+    </head>
+    <body>
+        <div class="container">
+            <h1>🤖 THKBot168 Admin Panel</h1>
+            <p>ระบบจัดการ LINE OA และ Customer Support แบบครบวงจร</p>
+            
+            <div class="feature">
+                <h3>📱 จัดการ LINE OA หลายตัว</h3>
+                <p>เชื่อมต่อ LINE Official Account หลายบัญชีโดยไม่ต้องแก้โค้ด</p>
+            </div>
+            
+            <div class="feature">
+                <h3>💬 ตอบข้อความลูกค้าผ่านเว็บ</h3>
+                <p>แอดมินสามารถตอบข้อความลูกค้าทุกบัญชี LINE OA ผ่านหน้าเว็บเดียว</p>
+            </div>
+            
+            <div class="feature">
+                <h3>🤖 ระบบตอบกลับอัตโนมัติ</h3>
+                <p>ตั้งแพทเทินการตอบกลับด่วนและการตอบกลับอัตโนมัติ</p>
+            </div>
+            
+            <div class="feature">
+                <h3>🛡️ ตรวจจับสลิปปลอม</h3>
+                <p>ระบบ AI ตรวจจับสลิปธนาคารปลอมและสลิปทรูวอลเล็ทปลอม</p>
+            </div>
+            
+            <div class="feature">
+                <h3>📊 รายงานและสถิติ</h3>
+                <p>ดูสถิติการใช้งาน ข้อความ และธุรกรรมแบบ Real-time</p>
+            </div>
+            
+            <a href="/" class="btn">← กลับไปหน้าหลัก</a>
+            
+            <br><br>
+            <p style="color: #666; font-size: 0.9em;">
+                🚀 Phase 1 เสร็จสิ้น: โครงสร้างพื้นฐาน, Models, และ Admin System<br>
+                📋 Phase 2: กำลังพัฒนา LINE OA Management Interface<br>
+                💬 Phase 3: Customer Response System<br>
+                🔍 Phase 4: Advanced Slip Verification<br>
+            </p>
+        </div>
+    </body>
+    </html>
+    """
 
 @app.route("/get_transactions")
 def get_transactions():
@@ -166,129 +176,7 @@ def get_transactions():
         "daily_user_summary": daily_user_summary
     })
 
-# -------------------- LINE OA Webhooks --------------------
-@app.route("/line/<int:oa_id>/webhook", methods=["POST"])
-def line_webhook(oa_id):
-    """Handle LINE webhook for specific OA"""
-    if not MODULES_AVAILABLE:
-        return "Service not available", 503
-        
-    try:
-        body = request.get_data(as_text=True)
-        signature = request.headers.get('X-Line-Signature')
-        
-        if not signature:
-            logger.error("Missing X-Line-Signature header")
-            return "Bad Request", 400
-        
-        # Handle webhook using line_manager
-        success = line_manager.handle_webhook(oa_id, body, signature)
-        
-        if success:
-            return "OK", 200
-        else:
-            return "Bad Request", 400
-            
-    except Exception as e:
-        logger.error(f"Error handling LINE webhook: {str(e)}")
-        return "Internal Server Error", 500
-
-# -------------------- Enhanced Upload Slip with Verification --------------------
-@app.route("/upload_slip/<txid>", methods=["POST"])
-def upload_slip(txid):
-    if "file" not in request.files:
-        return jsonify({"status":"error","message":"No file"}), 400
-    file = request.files["file"]
-    if file.filename == "":
-        return jsonify({"status":"error","message":"Empty filename"}), 400
-    
-    filename = secure_filename(file.filename)
-    save_path = os.path.join(app.config['UPLOAD_FOLDER'], filename)
-    file.save(save_path)
-    
-    # Verify slip if enabled
-    verification_result = None
-    if MODULES_AVAILABLE and app.config['SLIP_VERIFICATION_ENABLED']:
-        try:
-            verification_result = slip_verifier.verify_slip(save_path, txid)
-            logger.info(f"Slip verification result for {txid}: {verification_result['result']}")
-        except Exception as e:
-            logger.error(f"Error verifying slip: {str(e)}")
-
-    for lst in [transactions["new"], transactions["approved"], transactions["cancelled"]]:
-        for tx in lst:
-            if tx["id"] == txid:
-                tx["slip_filename"] = filename
-                if verification_result:
-                    tx["slip_verification"] = verification_result
-                save_transactions()
-                return jsonify({
-                    "status":"success", 
-                    "verification": verification_result
-                }), 200
-    return jsonify({"status":"error","message":"TX not found"}), 404
-
-# -------------------- API Endpoints for LINE OA Management --------------------
-@app.route("/api/line_oas")
-def api_line_oas():
-    """Get all LINE OA accounts"""
-    if not MODULES_AVAILABLE:
-        return jsonify({"error": "Service not available"}), 503
-        
-    oas = LineOA.query.all()
-    return jsonify([{
-        'id': oa.id,
-        'name': oa.name,
-        'is_active': oa.is_active,
-        'created_at': oa.created_at.isoformat()
-    } for oa in oas])
-
-@app.route("/api/messages")
-def api_messages():
-    """Get recent messages"""
-    if not MODULES_AVAILABLE:
-        return jsonify({"error": "Service not available"}), 503
-        
-    oa_id = request.args.get('oa_id', type=int)
-    limit = request.args.get('limit', 50, type=int)
-    
-    messages = line_manager.get_messages(oa_id=oa_id, limit=limit)
-    
-    return jsonify([{
-        'id': msg.id,
-        'user_id': msg.user_id,
-        'user_display_name': msg.user_display_name,
-        'message_text': msg.message_text,
-        'message_type': msg.message_type,
-        'timestamp': msg.timestamp.isoformat(),
-        'is_from_user': msg.is_from_user,
-        'status': msg.status,
-        'line_oa_id': msg.line_oa_id
-    } for msg in messages])
-
-@app.route("/api/send_message", methods=["POST"])
-def api_send_message():
-    """Send message via LINE OA"""
-    if not MODULES_AVAILABLE:
-        return jsonify({"error": "Service not available"}), 503
-        
-    try:
-        data = request.get_json()
-        oa_id = data.get('oa_id')
-        user_id = data.get('user_id')
-        message_text = data.get('message_text')
-        
-        if not all([oa_id, user_id, message_text]):
-            return jsonify({"success": False, "error": "Missing required fields"}), 400
-        
-        result = line_manager.send_message(oa_id, user_id, message_text)
-        return jsonify(result)
-        
-    except Exception as e:
-        logger.error(f"Error in API send message: {str(e)}")
-        return jsonify({"success": False, "error": str(e)}), 500
-
-# -------------------- Approve / Cancel / Restore (Legacy) --------------------
+# -------------------- Approve / Cancel / Restore --------------------
 @app.route("/approve", methods=["POST"])
 def approve():
     txid = request.json.get("id")
@@ -373,7 +261,7 @@ def reset_cancelled():
     log_with_time(f"[RESET CANCELLED] Cleared {count} cancelled transactions")
     return jsonify({"status":"success","cleared":count})
 
-# -------------------- Webhook TrueWallet (Legacy) --------------------
+# -------------------- Webhook TrueWallet --------------------
 @app.route("/truewallet/webhook", methods=["POST"])
 def truewallet_webhook():
     try:
@@ -436,82 +324,51 @@ def truewallet_webhook():
         transactions["new"].append(tx)
         save_transactions()
         log_with_time("[WEBHOOK RECEIVED]", tx)
-        
-        # Emit real-time update via SocketIO
-        if socketio:
-            socketio.emit('new_transaction', tx)
-        
         return jsonify({"status":"success"}), 200
 
     except Exception as e:
         log_with_time("[WEBHOOK EXCEPTION]", str(e))
         return jsonify({"status":"error","message":str(e)}), 500
 
+# -------------------- Upload Slip --------------------
+@app.route("/upload_slip/<txid>", methods=["POST"])
+def upload_slip(txid):
+    if "file" not in request.files:
+        return jsonify({"status":"error","message":"No file"}), 400
+    file = request.files["file"]
+    if file.filename == "":
+        return jsonify({"status":"error","message":"Empty filename"}), 400
+    filename = secure_filename(file.filename)
+    save_path = os.path.join(app.config['UPLOAD_FOLDER'], filename)
+    file.save(save_path)
+
+    for lst in [transactions["new"], transactions["approved"], transactions["cancelled"]]:
+        for tx in lst:
+            if tx["id"] == txid:
+                tx["slip_filename"] = filename
+                save_transactions()
+                return jsonify({"status":"success"}), 200
+    return jsonify({"status":"error","message":"TX not found"}), 404
+
 @app.route("/slip/<filename>")
 def get_slip(filename):
     return send_from_directory(app.config['UPLOAD_FOLDER'], filename)
 
-# -------------------- Admin Quick Access --------------------
-@app.route("/admin")
-def admin_redirect():
-    return redirect(url_for('admin.dashboard'))
-
-# -------------------- SocketIO Events --------------------
-@socketio.on('connect')
-def handle_connect():
-    logger.info('Client connected to SocketIO')
-
-@socketio.on('disconnect')
-def handle_disconnect():
-    logger.info('Client disconnected from SocketIO')
-
-@socketio.on('join_room')
-def handle_join_room(data):
-    """Join a specific room for LINE OA messages"""
-    oa_id = data.get('oa_id')
-    if oa_id:
-        from flask_socketio import join_room
-        join_room(f'oa_{oa_id}')
-        logger.info(f'Client joined room oa_{oa_id}')
-
-# -------------------- Initialize and Run --------------------
-def initialize_app():
-    """Initialize application with database and default data"""
-    if MODULES_AVAILABLE:
-        with app.app_context():
-            db.create_all()
-            
-            # Load legacy transaction data if exists
-            if os.path.exists(DATA_FILE):
-                try:
-                    with open(DATA_FILE, "r", encoding="utf-8") as f:
-                        transactions.update(json.load(f))
-                except:
-                    pass
-            
-            # Initialize LINE manager
-            line_manager.load_line_oas()
-            
-            logger.info("Application initialized successfully")
-    else:
-        # Load legacy transaction data if exists
-        if os.path.exists(DATA_FILE):
+# -------------------- Run --------------------
+if __name__ == "__main__":
+    # โหลดข้อมูลเก่าถ้ามี
+    if os.path.exists(DATA_FILE):
+        with open(DATA_FILE, "r", encoding="utf-8") as f:
             try:
-                with open(DATA_FILE, "r", encoding="utf-8") as f:
-                    transactions.update(json.load(f))
+                transactions.update(json.load(f))
             except:
                 pass
-        logger.info("Application initialized in basic mode")
-
-if __name__ == "__main__":
-    # Create upload directory
-    os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
     
-    # Initialize app
-    initialize_app()
+    print("🚀 THKBot168 starting...")
+    print("📱 LINE OA Management System")
+    print("💬 Customer Response System")
+    print("🛡️ Slip Verification System")
+    print("🔧 Admin Panel: http://localhost:8080/admin")
+    print("📊 Dashboard: http://localhost:8080/")
     
-    # Run with SocketIO if available, otherwise regular Flask
-    if socketio:
-        socketio.run(app, host="0.0.0.0", port=8080, debug=True)
-    else:
-        app.run(host="0.0.0.0", port=8080, debug=True)
+    app.run(host="0.0.0.0", port=8080, debug=True)

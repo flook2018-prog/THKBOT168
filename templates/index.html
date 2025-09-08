@@ -38,8 +38,29 @@ button.restore:hover{background:#e0a800}
 </style>
 </head>
 <body>
-<h1>THKBot168 Dashboard (Realtime)</h1>
-<div id="ip-display">IP: {{ user_ip }}</div>
+<div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
+    <h1>THKBot168 Dashboard (Realtime)</h1>
+    <div style="display: flex; gap: 10px;">
+        <a href="/admin" style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 8px 16px; text-decoration: none; border-radius: 5px;">🔧 Admin Panel</a>
+        <div id="ip-display" style="position: static; font-weight: bold; color: #555;">IP: {{ user_ip }}</div>
+    </div>
+</div>
+
+<!-- New Stats Row -->
+<div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 15px; margin-bottom: 20px;">
+    <div class="summary-card">
+        <h2>📱 LINE OA ที่เปิดใช้งาน</h2>
+        <span style="font-weight: bold; font-size: 1.5em; color: #28a745;">{{ stats.active_line_oas }}</span>
+    </div>
+    <div class="summary-card">
+        <h2>💬 ข้อความที่ยังไม่อ่าน</h2>
+        <span style="font-weight: bold; font-size: 1.5em; color: #ff6b6b;">{{ stats.unread_messages }}</span>
+    </div>
+    <div class="summary-card">
+        <h2>📊 ธุรกรรมทั้งหมด</h2>
+        <span style="font-weight: bold; font-size: 1.5em; color: #4ecdc4;">{{ stats.total_transactions }}</span>
+    </div>
+</div>
 
 <div id="top-bar">
   <div class="summary-card">
