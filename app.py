@@ -1,6 +1,6 @@
 from flask import Flask, request, jsonify, render_template, send_from_directory
 import os, json, jwt, random
-from datetime import datetime
+from datetime import datetime, timedelta
 from collections import defaultdict
 from werkzeug.utils import secure_filename
 import pytz
@@ -20,6 +20,7 @@ DATA_FILE = "transactions_data.json"
 LOG_FILE = "transactions.log"
 SECRET_KEY = "f557ff6589e6d075581d68df1d4f3af7"
 
+# กำหนด timezone
 TZ = pytz.timezone("Asia/Bangkok")
 
 BANK_MAP_TH = {
@@ -72,6 +73,7 @@ def index():
 
 @app.route("/get_transactions")
 def get_transactions():
+    # เรียงรายการใหม่, อนุมัติ, ยกเลิก
     new_orders = transactions["new"][-20:][::-1]
     approved_orders = transactions["approved"][-20:][::-1]
     cancelled_orders = transactions["cancelled"][-20:][::-1]
@@ -79,6 +81,7 @@ def get_transactions():
     wallet_daily_total = sum(tx["amount"] for tx in approved_orders)
     wallet_daily_total_str = fmt_amount(wallet_daily_total)
 
+    # ฟอร์แมตเวลาเป็น Asia/Bangkok
     for tx in new_orders:
         tx["time_str"] = fmt_time_local(tx.get("time"))
     for tx in approved_orders:
@@ -88,12 +91,21 @@ def get_transactions():
         tx["time_str"] = fmt_time_local(tx.get("time"))
         tx["cancelled_time_str"] = fmt_time_local(tx.get("cancelled_time"))
 
+    # สร้างข้อมูลกราฟยอดฝากรายวัน
+    daily_user_summary = defaultdict(lambda: defaultdict(int))  # {date: {user: amount}}
+    for tx in approved_orders:
+        user = tx.get("customer_user")
+        if user and user.startswith("thk") and user[3:].isdigit():
+            day = tx["time"][:10] if isinstance(tx["time"], str) else tx["time"].strftime("%Y-%m-%d")
+            daily_user_summary[day][user] += tx["amount"]
+
     return jsonify({
         "new_orders": new_orders,
         "approved_orders": approved_orders,
         "cancelled_orders": cancelled_orders,
         "wallet_daily_total": wallet_daily_total_str,
-        "daily_summary": [{"date": d, "total": fmt_amount(v)} for d,v in sorted(daily_summary_history.items())]
+        "daily_summary": [{"date": d, "total": fmt_amount(v)} for d,v in sorted(daily_summary_history.items())],
+        "daily_user_summary": daily_user_summary
     })
 
 # -------------------- Approve / Cancel / Restore --------------------
@@ -209,6 +221,7 @@ def truewallet_webhook():
         amount = int(decoded.get("amount",0))
         sender_name = decoded.get("sender_name","-")
         sender_mobile = decoded.get("sender_mobile","-")
+        # แก้ปัญหา quote ผิด
         name = f"{sender_name} / {sender_mobile}" if sender_mobile and sender_mobile != "-" else sender_name
 
         event_type = decoded.get("event_type","ฝาก").upper()
@@ -223,6 +236,7 @@ def truewallet_webhook():
         else:
             bank_name_th="-"
 
+        # แปลงเวลาที่ได้รับเป็น UTC ก่อนเก็บ
         time_str = decoded.get("received_time") or datetime.utcnow().isoformat()
         try:
             tx_time_utc = datetime.fromisoformat(time_str)
@@ -250,7 +264,7 @@ def truewallet_webhook():
         log_with_time("[WEBHOOK EXCEPTION]", str(e))
         return jsonify({"status":"error","message":str(e)}), 500
 
-# -------------------- Upload / Delete Slip --------------------
+# -------------------- Upload Slip --------------------
 @app.route("/upload_slip/<txid>", methods=["POST"])
 def upload_slip(txid):
     if "file" not in request.files:
@@ -270,26 +284,13 @@ def upload_slip(txid):
                 return jsonify({"status":"success"}), 200
     return jsonify({"status":"error","message":"TX not found"}), 404
 
-@app.route("/delete_slip/<txid>", methods=["POST"])
-def delete_slip(txid):
-    for lst in [transactions["new"], transactions["approved"], transactions["cancelled"]]:
-        for tx in lst:
-            if tx["id"] == txid and tx.get("slip_filename"):
-                try:
-                    os.remove(os.path.join(app.config['UPLOAD_FOLDER'], tx['slip_filename']))
-                except:
-                    pass
-                tx['slip_filename'] = None
-                save_transactions()
-                return jsonify({"status":"success"}), 200
-    return jsonify({"status":"error"}), 404
-
 @app.route("/slip/<filename>")
 def get_slip(filename):
     return send_from_directory(app.config['UPLOAD_FOLDER'], filename)
 
 # -------------------- Run --------------------
 if __name__ == "__main__":
+    # โหลดข้อมูลเก่าถ้ามี
     if os.path.exists(DATA_FILE):
         with open(DATA_FILE, "r", encoding="utf-8") as f:
             try:
