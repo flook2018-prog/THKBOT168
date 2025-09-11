@@ -91,8 +91,14 @@ def get_transactions():
         tx["time_str"] = fmt_time_local(tx.get("time"))
         tx["cancelled_time_str"] = fmt_time_local(tx.get("cancelled_time"))
 
+    # ✅ ส่งค่า customer_user กลับไปด้วยเสมอ
+    for lst in [new_orders, approved_orders, cancelled_orders]:
+        for tx in lst:
+            if "customer_user" not in tx:
+                tx["customer_user"] = ""
+
     # สร้างข้อมูลกราฟยอดฝากรายวัน
-    daily_user_summary = defaultdict(lambda: defaultdict(int))  # {date: {user: amount}}
+    daily_user_summary = defaultdict(lambda: defaultdict(int))
     for tx in approved_orders:
         user = tx.get("customer_user")
         if user and user.startswith("thk") and user[3:].isdigit():
@@ -221,7 +227,6 @@ def truewallet_webhook():
         amount = int(decoded.get("amount",0))
         sender_name = decoded.get("sender_name","-")
         sender_mobile = decoded.get("sender_mobile","-")
-        # แก้ปัญหา quote ผิด
         name = f"{sender_name} / {sender_mobile}" if sender_mobile and sender_mobile != "-" else sender_name
 
         event_type = decoded.get("event_type","ฝาก").upper()
@@ -236,7 +241,6 @@ def truewallet_webhook():
         else:
             bank_name_th="-"
 
-        # แปลงเวลาที่ได้รับเป็น UTC ก่อนเก็บ
         time_str = decoded.get("received_time") or datetime.utcnow().isoformat()
         try:
             tx_time_utc = datetime.fromisoformat(time_str)
@@ -272,7 +276,9 @@ def upload_slip(txid):
     file = request.files["file"]
     if file.filename == "":
         return jsonify({"status":"error","message":"Empty filename"}), 400
-    filename = secure_filename(file.filename)
+
+    # ป้องกันไฟล์ซ้ำด้วย timestamp
+    filename = datetime.now().strftime("%Y%m%d%H%M%S_") + secure_filename(file.filename)
     save_path = os.path.join(app.config['UPLOAD_FOLDER'], filename)
     file.save(save_path)
 
@@ -281,7 +287,8 @@ def upload_slip(txid):
             if tx["id"] == txid:
                 tx["slip_filename"] = filename
                 save_transactions()
-                return jsonify({"status":"success"}), 200
+                log_with_time(f"[UPLOAD SLIP] {txid} saved as {filename}")
+                return jsonify({"status":"success","filename": filename}), 200
     return jsonify({"status":"error","message":"TX not found"}), 404
 
 @app.route("/slip/<filename>")
@@ -290,7 +297,6 @@ def get_slip(filename):
 
 # -------------------- Run --------------------
 if __name__ == "__main__":
-    # โหลดข้อมูลเก่าถ้ามี
     if os.path.exists(DATA_FILE):
         with open(DATA_FILE, "r", encoding="utf-8") as f:
             try:
