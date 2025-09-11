@@ -127,6 +127,9 @@ toggleBtn.onclick=()=>{
     toggleBtn.innerText = nightMode ? "🌙" : "🌞";
 };
 
+// เก็บค่า user ที่กรอกไว้ไม่ให้หาย
+let tempUserData = {};
+
 async function fetchTransactions(){
     let resp=await fetch("/get_transactions"); 
     let data=await resp.json();
@@ -145,7 +148,7 @@ async function fetchTransactions(){
 
     function renderSlip(tx){
         let fileInput = `<input type="file" onchange="uploadSlip(event,'${tx.id}')">`;
-        let pasteArea = `<div class="paste-area" onpaste="handlePaste(event,'${tx.id}')">วางรูปที่นี่ (Ctrl+V)</div>`;
+        let pasteArea = `<div class="paste-area" contenteditable="true" onpaste="handlePaste(event,'${tx.id}')">วางรูปที่นี่ (Ctrl+V)</div>`;
         let deleteBtn = tx.slip_filename ? `<button class="delete-slip" onclick="deleteSlip('${tx.id}')">ลบรูป</button>` : "";
         if(tx.slip_filename){
             return `<a href="/slip/${tx.slip_filename}" target="_blank">ดูรูป</a>` + pasteArea + deleteBtn;
@@ -162,11 +165,14 @@ async function fetchTransactions(){
         row.insertCell(0).innerText=tx.event;
         row.insertCell(1).innerText=tx.amount_str;
         row.insertCell(2).innerText=tx.name||"-";
+
         let userCell = row.insertCell(3);
         let inputUser = document.createElement("input");
         inputUser.className="customer-user";
-        inputUser.value=tx.customer_user||"";
+        inputUser.value=tempUserData[tx.id] || tx.customer_user || "";
+        inputUser.oninput=()=>{ tempUserData[tx.id] = inputUser.value; };
         userCell.appendChild(inputUser);
+
         row.insertCell(4).innerText=tx.time_str||"-";
         row.insertCell(5).innerText=tx.bank||"-";
         row.insertCell(6).innerHTML=renderSlip(tx);
@@ -178,12 +184,14 @@ async function fetchTransactions(){
             let customer_user = inputUser.value.trim();
             if(!customer_user) return alert("ต้องใส่ยูสเซอร์ลูกค้าก่อนอนุมัติ");
             await fetch("/approve",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({id:tx.id,customer_user})});
+            delete tempUserData[tx.id];
             fetchTransactions();
         };
         let btnCancel=document.createElement("button");
         btnCancel.className="cancel"; btnCancel.innerText="ยกเลิก";
         btnCancel.onclick=async ()=>{
             await fetch("/cancel",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({id:tx.id})});
+            delete tempUserData[tx.id];
             fetchTransactions();
         };
         cell.appendChild(btnApprove);
