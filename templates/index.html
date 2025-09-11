@@ -7,7 +7,7 @@ body{font-family:'Segoe UI',sans-serif;background:#f0f2f5;margin:0;padding:20px;
 body.night{background:#121212;color:#eee}
 body.night table{border-color:#444}
 body.night th{background:#1e1e1e;color:#fff}
-body.night tr{background-color:transparent;transition:none;}
+body.night tr{background-color:#1e1e1e;transition:none;} /* ป้องกันกระพริบ */
 body.night tr:hover{background-color:#2a2a2a;transition:background-color 0.3s;}
 body.night .summary-card{background:#1e1e1e;color:#eee;box-shadow:0 4px 12px rgba(0,0,0,0.5)}
 h1{text-align:center;margin-bottom:20px}
@@ -19,14 +19,12 @@ h2{margin:10px 0}
     display:block;
     font-size:2em;
     font-weight:bold;
-    color:#28a745;
     text-align:center;
-    margin-top:10px
+    margin-top:10px;
 }
 .summary-card span#wallet-info::after{
     content: " บาท";
     font-size:1em;
-    color:#333;
 }
 body.night .summary-card span#wallet-info::after{
     color:#eee;
@@ -45,13 +43,12 @@ button.approve:hover{background:#218838}
 button.cancel{background:#dc3545;color:white}
 button.restore{background:#ffc107;color:#333}
 button.restore:hover{background:#e0a800}
-button.delete-slip{background:#dc3545;color:white;margin-left:5px;}
+button.delete-slip{background:#dc3545;color:white}
+button.delete-slip:hover{background:#a71d2a}
 #toggle-mode{position:absolute;top:10px;right:20px;cursor:pointer;font-size:1.5em;}
-input.customer-user{width:100%;padding:3px;border-radius:4px;border:1px solid #ccc;box-sizing:border-box}
-.paste-area{margin-top:5px;padding:5px;border:1px dashed #ccc;border-radius:4px;min-height:40px;text-align:center;color:#999;font-size:0.85em;}
+input.customer-user{width:100%;padding:3px;border-radius:4px;border:1px solid #ccc;box-sizing:border-box;color:inherit;background:inherit;}
+.paste-area{margin-top:5px;padding:5px;border:1px dashed #ccc;border-radius:4px;min-height:40px;text-align:center;color:#999;font-size:0.85em;cursor:pointer;}
 .paste-area:hover{border-color:#28a745;color:#28a745;}
-.paste-area:focus{outline:none;border-color:#28a745;color:#28a745;}
-.paste-area[contenteditable="true"]{cursor:text;}
 ::-webkit-scrollbar{width:8px}
 ::-webkit-scrollbar-thumb{background-color:rgba(0,0,0,0.2);border-radius:4px}
 ::-webkit-scrollbar-track{background:transparent}
@@ -84,12 +81,11 @@ input.customer-user{width:100%;padding:3px;border-radius:4px;border:1px solid #c
       </table>
     </div>
 
-    <h2>รายการที่ยกเลิก (Cancelled Orders)</h2>
+    <h2>รายการยกเลิก (Cancelled Orders)</h2>
     <div class="scroll-box">
       <table id="cancelled-orders-table">
         <thead>
-        <tr><th>ประเภท</th><th>จำนวน</th><th>ชื่อ/เบอร์</th><th>เวลา</th>
-        <th>ธนาคาร</th><th>ผู้ยกเลิก</th><th>เวลา</th><th>ยูสเซอร์ลูกค้า</th><th>สลิป</th><th>คืนเป็น New</th></tr>
+        <tr><th>ประเภท</th><th>จำนวน</th><th>ชื่อ/เบอร์</th><th>เวลา</th><th>ธนาคาร</th><th>ผู้ยกเลิก</th><th>เวลา</th><th>ยูสลูกค้า</th><th>สลิป</th><th>คืนเป็น New</th></tr>
         </thead>
         <tbody></tbody>
       </table>
@@ -126,157 +122,53 @@ const toggleBtn=document.getElementById("toggle-mode");
 toggleBtn.onclick=()=>{
     nightMode=!nightMode;
     document.body.classList.toggle("night",nightMode);
-    toggleBtn.innerText = nightMode ? "🌙" : "🌞";
+    toggleBtn.textContent=nightMode?"🌙":"🌞";
+    updateTables();
 };
 
-async function fetchTransactions(){
-    let resp=await fetch("/get_transactions"); 
-    let data=await resp.json();
-
-    document.getElementById("wallet-info").innerText = data.wallet_daily_total;
-
-    let dailyBody = document.querySelector("#daily-summary tbody");
-    dailyBody.innerHTML="";
-    let last5 = data.daily_summary.slice(-5);
-    last5.forEach(d=>{
-        let row = dailyBody.insertRow();
-        row.insertCell(0).innerText=d.date;
-        row.insertCell(1).innerText=d.total;
+function fetchTransactions(){
+    fetch("/get_transactions").then(res=>res.json()).then(data=>{
+        updateTable("new-orders-table",data.new_orders,true);
+        updateTable("approved-orders-table",data.approved_orders,false);
+        updateTable("cancelled-orders-table",data.cancelled_orders,false,true);
+        document.getElementById("wallet-info").textContent=data.wallet_daily_total;
+        let dailyTbody=document.querySelector("#daily-summary tbody");
+        dailyTbody.innerHTML="";
+        data.daily_summary.forEach(r=>{
+            let tr=document.createElement("tr");
+            tr.innerHTML=`<td>${r.date}</td><td>${r.total}</td>`;
+            dailyTbody.appendChild(tr);
+        });
     });
-
-    function renderSlip(tx){
-        let fileInput = `<input type="file" onchange="uploadSlip(event,'${tx.id}')">`;
-        let pasteArea = `<div class="paste-area" contenteditable="true"
-                            onpaste="handlePaste(event,'${tx.id}')">
-                            วางรูปที่นี่ (Ctrl+V)
-                         </div>`;
-        let deleteBtn = tx.slip_filename ? `<button class="delete-slip" onclick="deleteSlip('${tx.id}')">ลบรูป</button>` : "";
-        if(tx.slip_filename){
-            return `<a href="/slip/${tx.slip_filename}" target="_blank">ดูรูป</a>` + pasteArea + deleteBtn;
-        } else {
-            return fileInput + pasteArea;
-        }
-    }
-
-    let newBody = document.querySelector("#new-orders-table tbody");
-    newBody.innerHTML="";
-    data.new_orders.forEach(tx=>{
-        let row=newBody.insertRow();
-        row.insertCell(0).innerText=tx.event;
-        row.insertCell(1).innerText=tx.amount_str;
-        row.insertCell(2).innerText=tx.name||"-";
-
-        let userCell = row.insertCell(3);
-        let inputUser = document.createElement("input");
-        inputUser.className="customer-user";
-        inputUser.value=tx.customer_user||"";
-        userCell.appendChild(inputUser);
-
-        row.insertCell(4).innerText=tx.time_str||"-";
-        row.insertCell(5).innerText=tx.bank||"-";
-        row.insertCell(6).innerHTML=renderSlip(tx);
-
-        let cell=row.insertCell(7);
-        let btnApprove=document.createElement("button");
-        btnApprove.className="approve"; btnApprove.innerText="อนุมัติ";
-        btnApprove.onclick=async ()=>{
-            let customer_user = inputUser.value.trim();
-            if(!customer_user) return alert("ต้องใส่ยูสเซอร์ลูกค้าก่อนอนุมัติ");
-            await fetch("/approve",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({id:tx.id,customer_user})});
-            fetchTransactions();
-        };
-        let btnCancel=document.createElement("button");
-        btnCancel.className="cancel"; btnCancel.innerText="ยกเลิก";
-        btnCancel.onclick=async ()=>{
-            await fetch("/cancel",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({id:tx.id})});
-            fetchTransactions();
-        };
-        cell.appendChild(btnApprove);
-        cell.appendChild(btnCancel);
-    });
-
-    let approvedBody=document.querySelector("#approved-orders-table tbody");
-    approvedBody.innerHTML="";
-    data.approved_orders.forEach(tx=>{
-        let row=approvedBody.insertRow();
-        row.insertCell(0).innerText=tx.event;
-        row.insertCell(1).innerText=tx.amount_str;
-        row.insertCell(2).innerText=tx.name||"-";
-        row.insertCell(3).innerText=tx.time_str||"-";
-        row.insertCell(4).innerText=tx.bank||"-";
-        row.insertCell(5).innerText=tx.approver_name||"-";
-        row.insertCell(6).innerText=tx.approved_time_str||"-";
-        row.insertCell(7).innerText=tx.customer_user||"-";
-        row.insertCell(8).innerHTML=tx.slip_filename?`<a href="/slip/${tx.slip_filename}" target="_blank">ดูรูป</a>`:"-";
-        let restoreBtn=document.createElement("button");
-        restoreBtn.className="restore"; restoreBtn.innerText="คืนเป็น New";
-        restoreBtn.onclick=async ()=>{if(!confirm("คุณแน่ใจว่าจะคืนรายการนี้เป็น New?")) return;await fetch("/restore",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({id:tx.id})});fetchTransactions();};
-        row.insertCell(9).appendChild(restoreBtn);
-    });
-
-    let cancelledBody=document.querySelector("#cancelled-orders-table tbody");
-    cancelledBody.innerHTML="";
-    data.cancelled_orders.forEach(tx=>{
-        let row=cancelledBody.insertRow();
-        row.insertCell(0).innerText=tx.event;
-        row.insertCell(1).innerText=tx.amount_str;
-        row.insertCell(2).innerText=tx.name||"-";
-        row.insertCell(3).innerText=tx.time_str||"-";
-        row.insertCell(4).innerText=tx.bank||"-";
-        row.insertCell(5).innerText=tx.canceler_name||"-";
-        row.insertCell(6).innerText=tx.cancelled_time_str||"-";
-        row.insertCell(7).innerText=tx.customer_user||"-";
-        row.insertCell(8).innerHTML=tx.slip_filename?`<a href="/slip/${tx.slip_filename}" target="_blank">ดูรูป</a>`:"-";
-        let restoreBtn=document.createElement("button");
-        restoreBtn.className="restore"; restoreBtn.innerText="คืนเป็น New";
-        restoreBtn.onclick=async ()=>{if(!confirm("คุณแน่ใจว่าจะคืนรายการนี้เป็น New?")) return;await fetch("/restore",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({id:tx.id})});fetchTransactions();};
-        row.insertCell(9).appendChild(restoreBtn);
+}
+function updateTables(id,data,isNew=false,isCancelled=false){
+    let tbody=document.querySelector("#"+id+" tbody");
+    tbody.innerHTML="";
+    data.forEach(tx=>{
+        let tr=document.createElement("tr");
+        let slipBtn=tx.slip_filename?`<a href="/slip/${tx.slip_filename}" target="_blank">ดูสลิป</a> <button class="delete-slip" onclick="deleteSlip('${tx.id}')">ลบรูป</button>`:"";
+        let customerInput=isNew?`<input class='customer-user' value='${tx.customer_user||""}' onchange="updateCustomer('${tx.id}',this.value)">`:"";
+        let restoreBtn=isCancelled||!isNew?`<button class='restore' onclick="restoreTx('${tx.id}')">คืนเป็น New</button>`:"";
+        tr.innerHTML=isCancelled?
+            `<td>${tx.event}</td><td>${tx.amount_str}</td><td>${tx.name}</td><td>${tx.time_str}</td><td>${tx.bank}</td><td>${tx.canceler_name||""}</td><td>${tx.cancelled_time_str||""}</td><td>${tx.customer_user||""}</td><td>${slipBtn}</td><td>${restoreBtn}</td>`:
+            `<td>${tx.event}</td><td>${tx.amount_str}</td><td>${tx.name}</td><td>${tx.time_str}</td><td>${tx.bank}</td>${isNew?`<td>${customerInput}</td>`: `<td>${tx.approver_name||""}</td><td>${tx.approved_time_str||""}</td><td>${tx.customer_user||""}</td>`}<td>${slipBtn}</td>${restoreBtn?`<td>${restoreBtn}</td>`:""}`;
+        tbody.appendChild(tr);
     });
 }
 
-async function uploadSlip(event, txid){
-    const file = event.target.files[0];
-    if(!file) return;
-    const formData = new FormData();
-    formData.append("file", file);
-    await fetch(`/upload_slip/${txid}`, {method:"POST", body:formData});
-    fetchTransactions();
+function updateCustomer(id,val){
+    fetch("/approve",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({id:id,customer_user:val})})
+    .then(fetchTransactions);
 }
-
-function handlePaste(event, txid){
-    const items = (event.clipboardData || event.originalEvent.clipboardData).items;
-    for(let i=0;i<items.length;i++){
-        const item = items[i];
-        if(item.kind === 'file'){
-            const blob = item.getAsFile();
-            const formData = new FormData();
-            formData.append("file", blob, `pasted_${Date.now()}.png`);
-            fetch(`/upload_slip/${txid}`, {method:"POST", body:formData}).then(()=>fetchTransactions());
-            event.preventDefault();
-            break;
-        }
-    }
+function restoreTx(id){
+    fetch("/restore",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({id:id})}).then(fetchTransactions);
 }
-
-async function deleteSlip(txid){
-    if(!confirm("คุณแน่ใจว่าจะลบรูปสลิปนี้?")) return;
-    await fetch(`/delete_slip/${txid}`, {method:"POST"});
-    fetchTransactions();
-}
-
-async function resetApproved(){
-    if(!confirm("คุณแน่ใจว่าจะรีเซทรายการที่อนุมัติทั้งหมด?")) return;
-    await fetch("/reset_approved",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({confirm:true})});
-    fetchTransactions();
-}
-async function resetCancelled(){
-    if(!confirm("คุณแน่ใจว่าจะรีเซทรายการที่ยกเลิกทั้งหมด?")) return;
-    await fetch("/reset_cancelled",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({confirm:true})});
-    fetchTransactions();
-}
-
-setInterval(fetchTransactions,3000);
-fetchTransactions();
+function resetApproved(){if(confirm("ยืนยันรีเซทรายการอนุมัติ?"))fetch("/reset_approved",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({confirm:true})}).then(fetchTransactions);}
+function resetCancelled(){if(confirm("ยืนยันรีเซทรายการยกเลิก?"))fetch("/reset_cancelled",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({confirm:true})}).then(fetchTransactions);}
+function deleteSlip(id){fetch("/delete_slip/"+id,{method:"POST"}).then(fetchTransactions);}
+function updateTables(){fetchTransactions();}
+setInterval(fetchTransactions,5000);
+window.onload=fetchTransactions;
 </script>
 </body>
 </html>
