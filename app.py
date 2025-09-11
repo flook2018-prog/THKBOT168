@@ -88,20 +88,12 @@ def get_transactions():
         tx["time_str"] = fmt_time_local(tx.get("time"))
         tx["cancelled_time_str"] = fmt_time_local(tx.get("cancelled_time"))
 
-    daily_user_summary = defaultdict(lambda: defaultdict(int))
-    for tx in approved_orders:
-        user = tx.get("customer_user")
-        if user and user.startswith("thk") and user[3:].isdigit():
-            day = tx["time"][:10] if isinstance(tx["time"], str) else tx["time"].strftime("%Y-%m-%d")
-            daily_user_summary[day][user] += tx["amount"]
-
     return jsonify({
         "new_orders": new_orders,
         "approved_orders": approved_orders,
         "cancelled_orders": cancelled_orders,
         "wallet_daily_total": wallet_daily_total_str,
-        "daily_summary": [{"date": d, "total": fmt_amount(v)} for d,v in sorted(daily_summary_history.items())],
-        "daily_user_summary": daily_user_summary
+        "daily_summary": [{"date": d, "total": fmt_amount(v)} for d,v in sorted(daily_summary_history.items())]
     })
 
 # -------------------- Approve / Cancel / Restore --------------------
@@ -258,7 +250,7 @@ def truewallet_webhook():
         log_with_time("[WEBHOOK EXCEPTION]", str(e))
         return jsonify({"status":"error","message":str(e)}), 500
 
-# -------------------- Upload Slip --------------------
+# -------------------- Upload / Delete Slip --------------------
 @app.route("/upload_slip/<txid>", methods=["POST"])
 def upload_slip(txid):
     if "file" not in request.files:
@@ -283,13 +275,14 @@ def delete_slip(txid):
     for lst in [transactions["new"], transactions["approved"], transactions["cancelled"]]:
         for tx in lst:
             if tx["id"] == txid and tx.get("slip_filename"):
-                file_path = os.path.join(app.config['UPLOAD_FOLDER'], tx["slip_filename"])
-                if os.path.exists(file_path):
-                    os.remove(file_path)
-                tx["slip_filename"] = None
+                try:
+                    os.remove(os.path.join(app.config['UPLOAD_FOLDER'], tx['slip_filename']))
+                except:
+                    pass
+                tx['slip_filename'] = None
                 save_transactions()
                 return jsonify({"status":"success"}), 200
-    return jsonify({"status":"error","message":"Slip not found"}), 404
+    return jsonify({"status":"error"}), 404
 
 @app.route("/slip/<filename>")
 def get_slip(filename):
