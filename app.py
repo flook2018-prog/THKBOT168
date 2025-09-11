@@ -278,6 +278,19 @@ def upload_slip(txid):
                 return jsonify({"status":"success"}), 200
     return jsonify({"status":"error","message":"TX not found"}), 404
 
+@app.route("/delete_slip/<txid>", methods=["POST"])
+def delete_slip(txid):
+    for lst in [transactions["new"], transactions["approved"], transactions["cancelled"]]:
+        for tx in lst:
+            if tx["id"] == txid and tx.get("slip_filename"):
+                file_path = os.path.join(app.config['UPLOAD_FOLDER'], tx["slip_filename"])
+                if os.path.exists(file_path):
+                    os.remove(file_path)
+                tx["slip_filename"] = None
+                save_transactions()
+                return jsonify({"status":"success"}), 200
+    return jsonify({"status":"error","message":"Slip not found"}), 404
+
 @app.route("/slip/<filename>")
 def get_slip(filename):
     return send_from_directory(app.config['UPLOAD_FOLDER'], filename)
